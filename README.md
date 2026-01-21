@@ -437,7 +437,7 @@ If you use SocialNetSim in your research, please cite:
 ```bibtex
 @software{socialnetsimd2025,
   title = {SocialNetSim: AI-Powered Synthetic Social Network Simulator},
-  author = {Mouhssine, Lhoucine},
+  author = {Lakhili, Mouhssine},
   year = {2025},
   url = {https://github.com/LMouhssine/SocialNetSim}
 }
