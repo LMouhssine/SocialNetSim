@@ -1,0 +1,73 @@
+# Echo Chamber scenario
+# Simulates conditions that promote ideological echo chambers
+
+name: "echo_chamber"
+description: "Scenario optimized to study echo chamber formation and polarization"
+seed: 42
+
+user:
+  num_users: 2000
+  traits:
+    # More polarized ideology distribution (bimodal)
+    ideology:
+      type: normal
+      mean: 0.0
+      std: 0.5
+      min_val: -1.0
+      max_val: 1.0
+    # Higher confirmation bias
+    confirmation_bias:
+      type: beta
+      alpha: 5.0
+      beta: 2.0
+    # Higher emotional reactivity
+    emotional_reactivity:
+      type: beta
+      alpha: 5.0
+      beta: 2.0
+
+network:
+  edges_per_new_node: 4
+  # Strong ideology-based connections
+  weight_degree: 0.3
+  weight_interest: 0.2
+  weight_ideology: 0.5
+
+content:
+  topics:
+    num_topics: 30
+    # More controversial topics
+    controversy_distribution:
+      type: beta
+      alpha: 3.0
+      beta: 2.0
+  # More misinformation
+  misinformation_rate: 0.10
+  avg_posts_per_step: 0.15
+
+engagement:
+  # Higher ideology weight
+  interest_weight: 0.3
+  ideology_weight: 0.5
+  quality_weight: 0.1
+  social_weight: 0.4
+
+feed:
+  # Interest-based algorithm reinforces echo chambers
+  algorithm: interest
+  diversity_penalty: 0.02  # Low diversity
+
+cascade:
+  base_spread_rate: 0.15
+  virality_boost: 0.7
+
+moderation:
+  enabled: false  # Study organic echo chamber formation
+
+events:
+  enabled: true
+  political_shock_prob: 0.4
+  misinfo_wave_prob: 0.3
+  viral_trend_prob: 0.15
+  algorithm_change_prob: 0.05
+  external_event_prob: 0.1

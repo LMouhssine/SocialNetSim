@@ -1,0 +1,85 @@
+# Misinformation scenario
+# Simulates conditions for studying misinformation spread and countermeasures
+
+name: "misinformation"
+description: "Scenario for studying misinformation dynamics and moderation effectiveness"
+seed: 42
+
+user:
+  num_users: 3000
+  traits:
+    # Varied susceptibility
+    misinfo_susceptibility:
+      type: beta
+      alpha: 3.0
+      beta: 4.0
+    # Higher emotional reactivity increases sharing
+    emotional_reactivity:
+      type: beta
+      alpha: 4.0
+      beta: 2.0
+    # More active users
+    activity_level:
+      type: beta
+      alpha: 3.0
+      beta: 3.0
+
+network:
+  edges_per_new_node: 5
+  weight_degree: 0.4
+  weight_interest: 0.4
+  weight_ideology: 0.2
+
+content:
+  topics:
+    num_topics: 40
+    controversy_distribution:
+      type: beta
+      alpha: 4.0
+      beta: 2.0
+  # Elevated misinformation rate
+  misinformation_rate: 0.15
+  avg_posts_per_step: 0.12
+
+engagement:
+  base_share_rate: 0.04  # Higher sharing
+  quality_weight: 0.15
+  social_weight: 0.4
+
+feed:
+  algorithm: engagement
+  velocity_weight: 0.4  # Velocity-based ranking amplifies viral misinfo
+
+cascade:
+  base_spread_rate: 0.2
+  virality_boost: 0.8
+  share_velocity_multiplier: 0.15
+  threshold_min: 1
+  threshold_max: 3
+  decay_rate: 0.03  # Slower decay
+
+moderation:
+  enabled: true
+  detection_accuracy: 0.7  # Realistic detection rate
+  false_positive_rate: 0.08
+  suppression_factor: 0.6
+  removal_threshold: 0.85
+
+events:
+  enabled: true
+  event_probability: 0.08
+  political_shock_prob: 0.25
+  misinfo_wave_prob: 0.35  # More misinfo events
+  viral_trend_prob: 0.2
+  algorithm_change_prob: 0.05
+  external_event_prob: 0.15
+  engagement_multiplier_range: [1.5, 4.0]
+
+ai:
+  virality_predictor:
+    enabled: true
+    train_interval: 30
+  misinfo_detector:
+    enabled: true
+    n_estimators: 150
+    max_depth: 5

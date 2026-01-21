@@ -1,0 +1,131 @@
+# Base simulation configuration for SocialNetSim
+# All values here represent sensible defaults that can be overridden by scenarios
+
+name: "base"
+description: "Base simulation configuration with balanced parameters"
+seed: null  # Set for reproducibility
+num_steps: 100
+
+user:
+  num_users: 1000
+  num_interests: 20
+  interests_per_user: [3, 8]
+  traits:
+    ideology:
+      type: normal
+      mean: 0.0
+      std: 0.3
+      min_val: -1.0
+      max_val: 1.0
+    confirmation_bias:
+      type: beta
+      alpha: 2.0
+      beta: 5.0
+    misinfo_susceptibility:
+      type: beta
+      alpha: 2.0
+      beta: 8.0
+    emotional_reactivity:
+      type: beta
+      alpha: 3.0
+      beta: 3.0
+    activity_level:
+      type: beta
+      alpha: 2.0
+      beta: 5.0
+
+network:
+  edges_per_new_node: 3
+  weight_degree: 0.5
+  weight_interest: 0.3
+  weight_ideology: 0.2
+
+content:
+  topics:
+    num_topics: 50
+    topic_popularity_alpha: 1.5
+    controversy_distribution:
+      type: beta
+      alpha: 2.0
+      beta: 5.0
+  quality_distribution:
+    type: beta
+    alpha: 3.0
+    beta: 2.0
+  misinformation_rate: 0.05
+  avg_posts_per_step: 0.1
+
+engagement:
+  base_view_rate: 0.3
+  base_like_rate: 0.1
+  base_share_rate: 0.02
+  base_comment_rate: 0.03
+  interest_weight: 0.4
+  ideology_weight: 0.3
+  quality_weight: 0.2
+  social_weight: 0.3
+  freshness_decay: 0.1
+  fatigue_recovery: 0.2
+  max_fatigue: 1.0
+
+feed:
+  algorithm: engagement
+  feed_size: 20
+  recency_weight: 0.3
+  velocity_weight: 0.3
+  relevance_weight: 0.4
+  diversity_penalty: 0.1
+  seen_penalty: 0.5
+
+cascade:
+  base_spread_rate: 0.1
+  virality_boost: 0.5
+  share_velocity_multiplier: 0.1
+  threshold_min: 1
+  threshold_max: 5
+  decay_rate: 0.05
+
+moderation:
+  enabled: true
+  detection_accuracy: 0.8
+  false_positive_rate: 0.05
+  suppression_factor: 0.5
+  removal_threshold: 0.9
+
+events:
+  enabled: true
+  event_probability: 0.05
+  political_shock_prob: 0.2
+  misinfo_wave_prob: 0.15
+  viral_trend_prob: 0.3
+  algorithm_change_prob: 0.1
+  external_event_prob: 0.25
+  min_duration: 5
+  max_duration: 20
+  engagement_multiplier_range: [1.5, 3.0]
+
+ai:
+  virality_predictor:
+    enabled: true
+    model_type: xgboost
+    n_estimators: 100
+    max_depth: 6
+    learning_rate: 0.1
+    train_interval: 50
+  churn_predictor:
+    enabled: true
+    model_type: xgboost
+    n_estimators: 100
+    max_depth: 5
+    learning_rate: 0.1
+    churn_threshold_steps: 10
+  misinfo_detector:
+    enabled: true
+    model_type: xgboost
+    n_estimators: 100
+    max_depth: 4
+    learning_rate: 0.1
+
+log_level: INFO
+save_interval: 10
+output_dir: data/simulations

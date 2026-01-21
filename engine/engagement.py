@@ -1,0 +1,385 @@
+"""User engagement model."""
+
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+from numpy.random import Generator
+
+from config.schemas import EngagementConfig
+from models import User, Post, Interaction
+from models.enums import InteractionType
+from .state import SimulationState
+
+
+@dataclass
+class EngagementProbabilities:
+    """Calculated engagement probabilities for a user-post pair."""
+
+    view: float = 0.0
+    like: float = 0.0
+    share: float = 0.0
+    comment: float = 0.0
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "view": self.view,
+            "like": self.like,
+            "share": self.share,
+            "comment": self.comment,
+        }
+
+
+class EngagementModel:
+    """Models user engagement with content.
+
+    Engagement probability = base_rate * content_match * quality_factor *
+                            social_factor * temporal_factor
+
+    Where:
+    - content_match: topic interest + ideology alignment (weighted by confirmation_bias)
+    - quality_factor: amplified by emotional_reactivity
+    - social_factor: author influence + friend engagement count
+    - temporal_factor: post freshness decay and user fatigue
+    """
+
+    def __init__(
+        self,
+        config: EngagementConfig,
+        seed: int | None = None,
+    ):
+        """Initialize engagement model.
+
+        Args:
+            config: Engagement configuration
+            seed: Random seed
+        """
+        self.config = config
+        self.rng = np.random.default_rng(seed)
+        self.interaction_counter = 0
+
+    def calculate_engagement_probability(
+        self,
+        user: User,
+        post: Post,
+        state: SimulationState,
+        users: dict[str, User],
+    ) -> EngagementProbabilities:
+        """Calculate engagement probabilities for a user-post pair.
+
+        Args:
+            user: User viewing the post
+            post: Post being viewed
+            state: Simulation state
+            users: Dictionary of all users
+
+        Returns:
+            EngagementProbabilities object
+        """
+        # Content match factor
+        content_match = self._calculate_content_match(user, post)
+
+        # Quality factor (amplified by emotional reactivity)
+        quality_factor = self._calculate_quality_factor(user, post)
+
+        # Social factor
+        social_factor = self._calculate_social_factor(user, post, state, users)
+
+        # Temporal factor
+        temporal_factor = self._calculate_temporal_factor(user, post, state)
+
+        # Get event effect
+        event_effect = state.get_combined_event_effect()
+        event_multiplier = event_effect.engagement_multiplier
+
+        # Calculate final probabilities
+        combined_factor = content_match * quality_factor * social_factor * temporal_factor * event_multiplier
+
+        view_prob = min(0.95, self.config.base_view_rate * combined_factor)
+        like_prob = min(0.8, self.config.base_like_rate * combined_factor)
+        share_prob = min(0.5, self.config.base_share_rate * combined_factor)
+        comment_prob = min(0.4, self.config.base_comment_rate * combined_factor)
+
+        # Misinformation boost (susceptible users more likely to engage with misinfo)
+        if post.content.is_misinformation:
+            misinfo_factor = 1 + user.traits.misinfo_susceptibility * event_effect.misinfo_boost * 0.5
+            like_prob *= misinfo_factor
+            share_prob *= misinfo_factor
+
+        return EngagementProbabilities(
+            view=view_prob,
+            like=like_prob,
+            share=share_prob,
+            comment=comment_prob,
+        )
+
+    def _calculate_content_match(self, user: User, post: Post) -> float:
+        """Calculate content match factor.
+
+        Considers topic interest and ideology alignment.
+        """
+        # Topic interest match
+        if user.interests and post.content.topics:
+            common_topics = user.interests & post.content.topics
+            if common_topics:
+                interest_match = sum(
+                    user.get_interest_weight(t) * post.content.get_topic_weight(t)
+                    for t in common_topics
+                ) / len(common_topics)
+            else:
+                interest_match = 0.2  # Some baseline for non-matched content
+        else:
+            interest_match = 0.3
+
+        # Ideology alignment (weighted by confirmation bias)
+        ideology_diff = abs(user.traits.ideology - post.content.ideology_score)
+        ideology_match = 1 - (ideology_diff / 2)
+
+        # Confirmation bias amplifies ideology preference
+        ideology_weight = user.traits.confirmation_bias * self.config.ideology_weight
+
+        content_match = (
+            self.config.interest_weight * interest_match +
+            ideology_weight * ideology_match
+        )
+
+        # Normalize to reasonable range
+        return 0.5 + content_match
+
+    def _calculate_quality_factor(self, user: User, post: Post) -> float:
+        """Calculate quality factor.
+
+        Quality and emotional content, amplified by user's emotional reactivity.
+        """
+        # Base quality
+        quality = post.content.quality_score
+
+        # Emotional intensity impact (reactive users respond more to emotional content)
+        emotional_intensity = post.content.emotional_intensity
+        emotional_factor = 1 + emotional_intensity * user.traits.emotional_reactivity
+
+        # Controversy can drive engagement
+        controversy_factor = 1 + post.content.controversy_score * 0.3
+
+        quality_factor = quality * emotional_factor * controversy_factor * self.config.quality_weight
+
+        return 0.5 + quality_factor
+
+    def _calculate_social_factor(
+        self,
+        user: User,
+        post: Post,
+        state: SimulationState,
+        users: dict[str, User],
+    ) -> float:
+        """Calculate social factor.
+
+        Author influence and friend engagement count.
+        """
+        # Author influence
+        author = users.get(post.author_id)
+        if author:
+            author_influence = author.influence_score
+            # Boost if user follows author
+            if post.author_id in user.following:
+                author_influence += 0.2
+        else:
+            author_influence = 0.3
+
+        # Friend engagement (how many friends engaged with this post)
+        post_interactions = state.get_interactions_for_post(post.post_id)
+        friend_engagements = sum(
+            1 for i in post_interactions
+            if i.user_id in user.following and i.interaction_type != InteractionType.VIEW
+        )
+
+        # Log scale for friend engagement
+        friend_factor = np.log1p(friend_engagements) / 3  # Normalize
+
+        social_factor = (
+            author_influence * 0.6 +
+            friend_factor * 0.4
+        ) * self.config.social_weight
+
+        return 0.5 + social_factor
+
+    def _calculate_temporal_factor(
+        self,
+        user: User,
+        post: Post,
+        state: SimulationState,
+    ) -> float:
+        """Calculate temporal factor.
+
+        Post freshness and user fatigue.
+        """
+        # Post freshness (decay with age)
+        age = state.current_step - post.created_step
+        freshness = np.exp(-age * self.config.freshness_decay)
+
+        # User fatigue
+        user_state = state.get_user_state(user.user_id)
+        if user_state:
+            fatigue_factor = 1 - user_state.fatigue * 0.5
+        else:
+            fatigue_factor = 1.0
+
+        # User activity level baseline
+        activity_factor = 0.5 + user.traits.activity_level * 0.5
+
+        return freshness * fatigue_factor * activity_factor
+
+    def process_engagement(
+        self,
+        user: User,
+        post: Post,
+        state: SimulationState,
+        users: dict[str, User],
+        source_user_id: str | None = None,
+    ) -> list[Interaction]:
+        """Process user engagement with a post.
+
+        Args:
+            user: User engaging
+            post: Post being engaged with
+            state: Simulation state
+            users: All users
+            source_user_id: User who exposed this user to the post
+
+        Returns:
+            List of generated interactions
+        """
+        interactions = []
+        probs = self.calculate_engagement_probability(user, post, state, users)
+
+        # Always attempt view first
+        if self.rng.random() < probs.view:
+            view_interaction = self._create_interaction(
+                user, post, InteractionType.VIEW, state, source_user_id
+            )
+            interactions.append(view_interaction)
+            post.record_view()
+
+            # Only consider other engagements if viewed
+            if self.rng.random() < probs.like:
+                like_interaction = self._create_interaction(
+                    user, post, InteractionType.LIKE, state, source_user_id
+                )
+                interactions.append(like_interaction)
+                post.record_like()
+
+            if self.rng.random() < probs.share:
+                share_interaction = self._create_interaction(
+                    user, post, InteractionType.SHARE, state, source_user_id
+                )
+                interactions.append(share_interaction)
+                post.record_share()
+
+            if self.rng.random() < probs.comment:
+                comment_interaction = self._create_interaction(
+                    user, post, InteractionType.COMMENT, state, source_user_id
+                )
+                interactions.append(comment_interaction)
+                post.record_comment()
+
+        return interactions
+
+    def _create_interaction(
+        self,
+        user: User,
+        post: Post,
+        interaction_type: InteractionType,
+        state: SimulationState,
+        source_user_id: str | None = None,
+    ) -> Interaction:
+        """Create an interaction object.
+
+        Args:
+            user: User interacting
+            post: Post being interacted with
+            interaction_type: Type of interaction
+            state: Simulation state
+            source_user_id: Source user for cascade tracking
+
+        Returns:
+            Interaction object
+        """
+        self.interaction_counter += 1
+        interaction_id = f"int_{self.interaction_counter:010d}"
+
+        return Interaction(
+            interaction_id=interaction_id,
+            user_id=user.user_id,
+            post_id=post.post_id,
+            interaction_type=interaction_type,
+            step=state.current_step,
+            cascade_id=post.cascade_id,
+            source_user_id=source_user_id,
+        )
+
+    def should_user_be_active(
+        self,
+        user: User,
+        state: SimulationState,
+    ) -> bool:
+        """Determine if a user should be active in current step.
+
+        Args:
+            user: User to check
+            state: Simulation state
+
+        Returns:
+            True if user should be active
+        """
+        if not user.is_active():
+            return False
+
+        # Base probability from activity level
+        base_prob = user.traits.activity_level
+
+        # Event boost
+        event_effect = state.get_combined_event_effect()
+        base_prob *= event_effect.activity_boost
+
+        # Fatigue penalty
+        user_state = state.get_user_state(user.user_id)
+        if user_state:
+            base_prob *= (1 - user_state.fatigue * 0.3)
+
+        return self.rng.random() < base_prob
+
+    def should_user_post(
+        self,
+        user: User,
+        state: SimulationState,
+        avg_posts_per_step: float,
+    ) -> bool:
+        """Determine if a user should create a post.
+
+        Args:
+            user: User to check
+            state: Simulation state
+            avg_posts_per_step: Average posts per user per step
+
+        Returns:
+            True if user should create a post
+        """
+        if not user.is_active():
+            return False
+
+        # Base probability
+        base_prob = avg_posts_per_step * user.traits.activity_level
+
+        # Daily limit check
+        user_state = state.get_user_state(user.user_id)
+        if user_state and user_state.daily_post_count >= 5:
+            base_prob *= 0.1  # Heavily reduce if already posted a lot
+
+        # Event boost
+        event_effect = state.get_combined_event_effect()
+        base_prob *= event_effect.activity_boost
+
+        # Influence boost (influential users post more)
+        base_prob *= (1 + user.influence_score * 0.5)
+
+        return self.rng.random() < base_prob

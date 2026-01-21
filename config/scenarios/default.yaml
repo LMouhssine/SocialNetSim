@@ -1,0 +1,24 @@
+# Default scenario - balanced simulation
+# Inherits most settings from base.yaml
+
+name: "default"
+description: "Default balanced simulation for general exploration"
+seed: 42
+
+user:
+  num_users: 1000
+
+network:
+  edges_per_new_node: 3
+
+content:
+  misinformation_rate: 0.05
+
+feed:
+  algorithm: engagement
+
+moderation:
+  enabled: true
+
+events:
+  enabled: true
