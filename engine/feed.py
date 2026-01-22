@@ -9,9 +9,10 @@ from config.schemas import FeedConfig
 from models import User, Post
 from models.enums import FeedAlgorithm
 from .state import SimulationState
+from .ranking_optimization import FeedOptimizer, FeedOptimizationConfig, create_user_context_vector
 
 
-class FeedRanker:
+class EnhancedFeedRanker:
     """Ranks posts for user feeds using various algorithms.
 
     Supports:
@@ -19,22 +20,54 @@ class FeedRanker:
     - Engagement: Rank by predicted engagement
     - Diverse: Balance relevance with diversity
     - Interest: Personalized by user interests
+
+    Enhanced features:
+    - Controversy amplification (capped boost)
+    - Social proximity (2-hop connections)
+    - Bandit-based weight optimization
     """
 
     def __init__(
         self,
         config: FeedConfig,
         seed: int | None = None,
+        controversy_amplification_weight: float = 0.1,
+        controversy_cap: float = 0.3,
+        social_proximity_weight: float = 0.2,
+        use_bandit_optimization: bool = False,
+        bandit_type: str = "thompson",
     ):
         """Initialize feed ranker.
 
         Args:
             config: Feed configuration
             seed: Random seed
+            controversy_amplification_weight: Weight for controversy boost
+            controversy_cap: Maximum controversy boost
+            social_proximity_weight: Weight for social proximity
+            use_bandit_optimization: Whether to use bandit optimization
+            bandit_type: Type of bandit ("thompson" or "linucb")
         """
         self.config = config
         self.rng = np.random.default_rng(seed)
         self.algorithm = FeedAlgorithm(config.algorithm)
+
+        # Enhanced ranking parameters
+        self.controversy_weight = controversy_amplification_weight
+        self.controversy_cap = controversy_cap
+        self.social_proximity_weight = social_proximity_weight
+
+        # Bandit optimization
+        self.use_bandit = use_bandit_optimization
+        if self.use_bandit:
+            from .ranking_optimization import BanditType
+            opt_config = FeedOptimizationConfig(
+                enabled=True,
+                bandit_type=BanditType(bandit_type),
+            )
+            self.optimizer = FeedOptimizer(opt_config, seed=seed)
+        else:
+            self.optimizer = None
 
     def rank_feed(
         self,
@@ -113,9 +146,10 @@ class FeedRanker:
         posts: list[Post],
         state: SimulationState,
     ) -> list[tuple[Post, float]]:
-        """Rank posts by predicted engagement.
+        """Rank posts by predicted engagement with enhanced features.
 
         Score = w1*velocity + w2*predicted_engagement + w3*author_relevance + w4*recency
+                + controversy_boost + social_proximity_boost
 
         Args:
             user: Viewing user
@@ -127,10 +161,21 @@ class FeedRanker:
         """
         scored = []
 
+        # Get dynamic weights from bandit optimizer if enabled
+        if self.use_bandit and self.optimizer:
+            weights = self.optimizer.select_weights()
+            velocity_weight = weights.get("velocity", self.config.velocity_weight)
+            relevance_weight = weights.get("relevance", self.config.relevance_weight)
+            recency_weight = weights.get("recency", self.config.recency_weight)
+        else:
+            velocity_weight = self.config.velocity_weight
+            relevance_weight = self.config.relevance_weight
+            recency_weight = self.config.recency_weight
+
         for post in posts:
             # Recency factor
             age = state.current_step - post.created_step
-            recency = 1.0 / (1.0 + age * self.config.recency_weight * 0.5)
+            recency = 1.0 / (1.0 + age * recency_weight * 0.5)
 
             # Velocity (engagement momentum)
             velocity = post.get_velocity(state.current_step)
@@ -152,12 +197,22 @@ class FeedRanker:
                 post.content.emotional_intensity * 0.3
             )
 
+            # ENHANCED: Controversy amplification (capped)
+            controversy_boost = self._calculate_controversy_boost(post)
+
+            # ENHANCED: Social proximity (2-hop connections)
+            social_proximity_boost = self._calculate_social_proximity(
+                user, post, state
+            )
+
             # Combine with weights
             score = (
-                self.config.velocity_weight * velocity_score +
-                self.config.relevance_weight * predicted_engagement +
-                self.config.recency_weight * recency +
-                0.2 * author_relevance
+                velocity_weight * velocity_score +
+                relevance_weight * predicted_engagement +
+                recency_weight * recency +
+                0.2 * author_relevance +
+                controversy_boost +
+                social_proximity_boost
             )
 
             # Small random factor to add variety
@@ -166,6 +221,108 @@ class FeedRanker:
             scored.append((post, score))
 
         return scored
+
+    def _calculate_controversy_boost(self, post: Post) -> float:
+        """Calculate controversy amplification boost (capped).
+
+        Controversial content gets a boost, but capped to prevent
+        excessive promotion of divisive content.
+
+        Args:
+            post: Post to evaluate
+
+        Returns:
+            Controversy boost value
+        """
+        raw_boost = post.content.controversy_score * self.controversy_weight
+
+        # Apply cap to prevent runaway controversy amplification
+        return min(raw_boost, self.controversy_cap)
+
+    def _calculate_social_proximity(
+        self,
+        user: User,
+        post: Post,
+        state: SimulationState,
+    ) -> float:
+        """Calculate social proximity boost based on 2-hop connections.
+
+        Boosts posts that friends or friends-of-friends engaged with.
+
+        Args:
+            user: Viewing user
+            post: Post to evaluate
+            state: Simulation state
+
+        Returns:
+            Social proximity boost value
+        """
+        if not self.social_proximity_weight:
+            return 0.0
+
+        # Get post interactions
+        interactions = state.get_interactions_for_post(post.post_id)
+        if not interactions:
+            return 0.0
+
+        # 1-hop: Direct friends who engaged
+        direct_friend_engagements = 0
+        # 2-hop: Friends of friends who engaged
+        friend_of_friend_engagements = 0
+
+        engaged_users = {i.user_id for i in interactions}
+
+        for engaged_user_id in engaged_users:
+            if engaged_user_id in user.following:
+                direct_friend_engagements += 1
+            else:
+                # Check if any friend follows this user (2-hop)
+                for friend_id in user.following:
+                    friend = state.users.get(friend_id)
+                    if friend and engaged_user_id in friend.following:
+                        friend_of_friend_engagements += 1
+                        break
+
+        # Weight direct friends more than 2-hop
+        proximity_score = (
+            direct_friend_engagements * 0.3 +
+            friend_of_friend_engagements * 0.1
+        )
+
+        # Normalize and apply weight
+        normalized = min(1.0, proximity_score / 5.0)
+        return normalized * self.social_proximity_weight
+
+    def record_engagement_feedback(
+        self,
+        views: int,
+        likes: int,
+        shares: int,
+        comments: int,
+    ) -> None:
+        """Record engagement feedback for bandit optimization.
+
+        Args:
+            views: Number of views
+            likes: Number of likes
+            shares: Number of shares
+            comments: Number of comments
+        """
+        if self.use_bandit and self.optimizer:
+            reward = self.optimizer.calculate_engagement_reward(
+                views, likes, shares, comments
+            )
+            self.optimizer.record_reward(reward)
+
+    def get_optimization_stats(self) -> dict[str, Any] | None:
+        """Get bandit optimization statistics.
+
+        Returns:
+            Statistics dictionary or None if optimization disabled
+        """
+        if self.use_bandit and self.optimizer:
+            return self.optimizer.get_statistics()
+        return None
 
     def _rank_diverse(
         self,
@@ -369,3 +526,7 @@ class FeedRanker:
             modified.append((post, score))
 
         return modified
+
+
+# Backward compatibility alias
+FeedRanker = EnhancedFeedRanker

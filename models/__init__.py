@@ -8,7 +8,13 @@ from .enums import (
     PostState,
     Sentiment,
 )
-from .user import User, UserTraits
+from .user import (
+    User,
+    UserTraits,
+    UserCognitiveState,
+    InteractionMemory,
+    AuthorInteractionSummary,
+)
 from .post import Post, PostContent
 from .interaction import Interaction, Cascade
 from .event import Event, EventEffect
@@ -24,6 +30,9 @@ __all__ = [
     # User
     "User",
     "UserTraits",
+    "UserCognitiveState",
+    "InteractionMemory",
+    "AuthorInteractionSummary",
     # Post
     "Post",
     "PostContent",

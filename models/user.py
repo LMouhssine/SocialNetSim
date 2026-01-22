@@ -2,10 +2,300 @@
 
 from dataclasses import dataclass, field
 from typing import Any
+from collections import deque, Counter
 
 import numpy as np
 
 from .enums import UserState
+
+
+@dataclass
+class InteractionMemory:
+    """Memory of a past interaction.
+
+    Attributes:
+        post_id: Post interacted with
+        author_id: Author of the post
+        interaction_type: Type of interaction
+        step: When interaction occurred
+        emotional_impact: Emotional impact of interaction (-1 to 1)
+        topics: Topics of the post
+    """
+
+    post_id: str
+    author_id: str
+    interaction_type: str
+    step: int
+    emotional_impact: float = 0.0
+    topics: tuple[str, ...] = field(default_factory=tuple)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "post_id": self.post_id,
+            "author_id": self.author_id,
+            "interaction_type": self.interaction_type,
+            "step": self.step,
+            "emotional_impact": self.emotional_impact,
+            "topics": list(self.topics),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "InteractionMemory":
+        """Create from dictionary."""
+        return cls(
+            post_id=data["post_id"],
+            author_id=data["author_id"],
+            interaction_type=data["interaction_type"],
+            step=data["step"],
+            emotional_impact=data.get("emotional_impact", 0.0),
+            topics=tuple(data.get("topics", [])),
+        )
+
+
+@dataclass
+class AuthorInteractionSummary:
+    """Summary of interactions with a specific author.
+
+    Attributes:
+        author_id: Author identifier
+        total_interactions: Total interaction count
+        positive_interactions: Positive interactions (likes, shares)
+        negative_interactions: Negative interactions (reports, blocks)
+        last_interaction_step: Step of last interaction
+        average_sentiment: Average sentiment of interactions
+    """
+
+    author_id: str
+    total_interactions: int = 0
+    positive_interactions: int = 0
+    negative_interactions: int = 0
+    last_interaction_step: int = 0
+    average_sentiment: float = 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "author_id": self.author_id,
+            "total_interactions": self.total_interactions,
+            "positive_interactions": self.positive_interactions,
+            "negative_interactions": self.negative_interactions,
+            "last_interaction_step": self.last_interaction_step,
+            "average_sentiment": self.average_sentiment,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AuthorInteractionSummary":
+        """Create from dictionary."""
+        return cls(**data)
+
+
+@dataclass
+class UserCognitiveState:
+    """Cognitive and emotional state of a user.
+
+    Models the user's current mental/emotional state which
+    affects their behavior and engagement decisions.
+
+    Attributes:
+        attention_budget: Remaining attention (0-1), depletes with activity
+        emotional_valence: Current emotional valence (-1 to 1)
+        emotional_arousal: Current emotional arousal (0-1)
+        current_confirmation_bias: Dynamic confirmation bias (can evolve)
+        interaction_memory: Recent interaction memories
+        topic_exposure_counts: Count of exposures to each topic
+        author_interaction_history: Summary of interactions with authors
+        opinion: Current opinion on main dimension (-1 to 1)
+        opinion_confidence: Confidence in current opinion (0-1)
+    """
+
+    attention_budget: float = 1.0
+    emotional_valence: float = 0.0
+    emotional_arousal: float = 0.5
+    current_confirmation_bias: float = 0.3
+    interaction_memory: deque = field(default_factory=lambda: deque(maxlen=100))
+    topic_exposure_counts: Counter = field(default_factory=Counter)
+    author_interaction_history: dict[str, AuthorInteractionSummary] = field(
+        default_factory=dict
+    )
+    opinion: float = 0.0
+    opinion_confidence: float = 0.5
+
+    def __post_init__(self):
+        """Validate and clip values."""
+        self.attention_budget = np.clip(self.attention_budget, 0.0, 1.0)
+        self.emotional_valence = np.clip(self.emotional_valence, -1.0, 1.0)
+        self.emotional_arousal = np.clip(self.emotional_arousal, 0.0, 1.0)
+        self.current_confirmation_bias = np.clip(self.current_confirmation_bias, 0.0, 1.0)
+        self.opinion = np.clip(self.opinion, -1.0, 1.0)
+        self.opinion_confidence = np.clip(self.opinion_confidence, 0.0, 1.0)
+
+    def deplete_attention(self, amount: float) -> None:
+        """Deplete attention budget.
+
+        Args:
+            amount: Amount to deplete (0-1)
+        """
+        self.attention_budget = max(0.0, self.attention_budget - amount)
+
+    def recover_attention(self, rate: float) -> None:
+        """Recover attention budget.
+
+        Args:
+            rate: Recovery rate (0-1)
+        """
+        self.attention_budget = min(1.0, self.attention_budget + rate)
+
+    def update_emotional_state(
+        self,
+        valence_delta: float,
+        arousal_delta: float,
+        decay_rate: float = 0.1,
+    ) -> None:
+        """Update emotional state with new input and decay.
+
+        Args:
+            valence_delta: Change in valence
+            arousal_delta: Change in arousal
+            decay_rate: Rate of decay toward neutral
+        """
+        # Apply input
+        self.emotional_valence += valence_delta
+        self.emotional_arousal += arousal_delta
+
+        # Decay toward neutral
+        self.emotional_valence *= (1 - decay_rate)
+        self.emotional_arousal = 0.5 + (self.emotional_arousal - 0.5) * (1 - decay_rate)
+
+        # Clip
+        self.emotional_valence = np.clip(self.emotional_valence, -1.0, 1.0)
+        self.emotional_arousal = np.clip(self.emotional_arousal, 0.0, 1.0)
+
+    def add_interaction_memory(self, memory: InteractionMemory) -> None:
+        """Add an interaction to memory.
+
+        Args:
+            memory: Interaction memory to add
+        """
+        self.interaction_memory.append(memory)
+
+        # Update topic exposure
+        for topic in memory.topics:
+            self.topic_exposure_counts[topic] += 1
+
+        # Update author interaction history
+        if memory.author_id not in self.author_interaction_history:
+            self.author_interaction_history[memory.author_id] = AuthorInteractionSummary(
+                author_id=memory.author_id
+            )
+
+        summary = self.author_interaction_history[memory.author_id]
+        summary.total_interactions += 1
+        summary.last_interaction_step = memory.step
+
+        if memory.emotional_impact > 0:
+            summary.positive_interactions += 1
+        elif memory.emotional_impact < 0:
+            summary.negative_interactions += 1
+
+        # Update running average sentiment
+        n = summary.total_interactions
+        summary.average_sentiment = (
+            summary.average_sentiment * (n - 1) + memory.emotional_impact
+        ) / n
+
+    def update_opinion(
+        self,
+        influence: float,
+        influence_weight: float = 0.1,
+    ) -> None:
+        """Update opinion based on new influence.
+
+        Args:
+            influence: Opinion influence from interaction (-1 to 1)
+            influence_weight: Weight of new influence
+        """
+        # Update opinion (weighted average)
+        self.opinion = (
+            self.opinion * (1 - influence_weight) +
+            influence * influence_weight
+        )
+        self.opinion = np.clip(self.opinion, -1.0, 1.0)
+
+    def get_topic_novelty(self, topic: str) -> float:
+        """Get novelty score for a topic.
+
+        Args:
+            topic: Topic ID
+
+        Returns:
+            Novelty score (0-1), higher for less seen topics
+        """
+        count = self.topic_exposure_counts.get(topic, 0)
+        return 1.0 / (1.0 + np.log1p(count))
+
+    def get_author_affinity(self, author_id: str) -> float:
+        """Get affinity score for an author.
+
+        Args:
+            author_id: Author ID
+
+        Returns:
+            Affinity score (-1 to 1)
+        """
+        if author_id not in self.author_interaction_history:
+            return 0.0
+
+        summary = self.author_interaction_history[author_id]
+        if summary.total_interactions == 0:
+            return 0.0
+
+        # Weighted by interaction count (diminishing returns)
+        interaction_factor = 1 - np.exp(-summary.total_interactions / 10)
+        return summary.average_sentiment * interaction_factor
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "attention_budget": self.attention_budget,
+            "emotional_valence": self.emotional_valence,
+            "emotional_arousal": self.emotional_arousal,
+            "current_confirmation_bias": self.current_confirmation_bias,
+            "interaction_memory": [m.to_dict() for m in self.interaction_memory],
+            "topic_exposure_counts": dict(self.topic_exposure_counts),
+            "author_interaction_history": {
+                k: v.to_dict() for k, v in self.author_interaction_history.items()
+            },
+            "opinion": self.opinion,
+            "opinion_confidence": self.opinion_confidence,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "UserCognitiveState":
+        """Create from dictionary."""
+        state = cls(
+            attention_budget=data.get("attention_budget", 1.0),
+            emotional_valence=data.get("emotional_valence", 0.0),
+            emotional_arousal=data.get("emotional_arousal", 0.5),
+            current_confirmation_bias=data.get("current_confirmation_bias", 0.3),
+            opinion=data.get("opinion", 0.0),
+            opinion_confidence=data.get("opinion_confidence", 0.5),
+        )
+
+        # Load interaction memory
+        for mem_data in data.get("interaction_memory", []):
+            state.interaction_memory.append(InteractionMemory.from_dict(mem_data))
+
+        # Load topic exposure
+        state.topic_exposure_counts = Counter(data.get("topic_exposure_counts", {}))
+
+        # Load author history
+        for author_id, summary_data in data.get("author_interaction_history", {}).items():
+            state.author_interaction_history[author_id] = AuthorInteractionSummary.from_dict(
+                summary_data
+            )
+
+        return state
 
 
 @dataclass

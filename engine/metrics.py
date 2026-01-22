@@ -320,6 +320,267 @@ class MetricsCollector:
             "bimodality_coefficient": float(bimodality),
         }
 
+
+class PolarizationMetrics:
+    """Enhanced polarization metrics calculator.
+
+    Computes:
+    - Bimodality coefficient (Sarle's)
+    - Echo chamber index
+    - Disagreement exposure (filter bubble detection)
+    - Opinion variance and cluster tracking
+    """
+
+    def __init__(self):
+        """Initialize polarization metrics calculator."""
+        self.history: list[dict[str, float]] = []
+
+    def compute_bimodality_coefficient(
+        self,
+        values: list[float],
+    ) -> float:
+        """Compute Sarle's bimodality coefficient.
+
+        BC > 0.555 suggests bimodal distribution.
+
+        Args:
+            values: List of values to analyze
+
+        Returns:
+            Bimodality coefficient
+        """
+        if len(values) < 4:
+            return 0.0
+
+        n = len(values)
+        arr = np.array(values)
+        mean = np.mean(arr)
+        std = np.std(arr)
+
+        if std < 1e-10:
+            return 0.0
+
+        # Third moment (skewness)
+        m3 = np.mean((arr - mean) ** 3)
+        g1 = m3 / (std ** 3)
+
+        # Fourth moment (kurtosis)
+        m4 = np.mean((arr - mean) ** 4)
+        g2 = m4 / (std ** 4) - 3
+
+        # Sarle's bimodality coefficient
+        numerator = g1 ** 2 + 1
+        denominator = g2 + 3 * (n - 1) ** 2 / ((n - 2) * (n - 3))
+
+        if abs(denominator) < 1e-10:
+            return 0.0
+
+        return float(numerator / denominator)
+
+    def compute_echo_chamber_index(
+        self,
+        users: dict[str, User],
+        opinions: dict[str, float],
+        threshold: float = 0.2,
+    ) -> float:
+        """Compute echo chamber index.
+
+        Ratio of within-cluster edges to between-cluster edges.
+        Higher values indicate stronger echo chambers.
+
+        Args:
+            users: Dictionary of users
+            opinions: User opinions (user_id -> opinion)
+            threshold: Opinion difference threshold for "same cluster"
+
+        Returns:
+            Echo chamber index
+        """
+        within_cluster = 0
+        between_cluster = 0
+
+        for user_id, user in users.items():
+            if user_id not in opinions:
+                continue
+
+            user_opinion = opinions[user_id]
+
+            for friend_id in user.following:
+                if friend_id not in opinions:
+                    continue
+
+                friend_opinion = opinions[friend_id]
+                diff = abs(user_opinion - friend_opinion)
+
+                if diff < threshold:
+                    within_cluster += 1
+                else:
+                    between_cluster += 1
+
+        if between_cluster == 0:
+            return float("inf") if within_cluster > 0 else 0.0
+
+        return within_cluster / between_cluster
+
+    def compute_disagreement_exposure(
+        self,
+        users: dict[str, User],
+        opinions: dict[str, float],
+    ) -> dict[str, float]:
+        """Compute disagreement exposure metrics.
+
+        Lower values indicate filter bubbles.
+
+        Args:
+            users: Dictionary of users
+            opinions: User opinions
+
+        Returns:
+            Dictionary with mean, std, and median disagreement exposure
+        """
+        exposures = []
+
+        for user_id, user in users.items():
+            if user_id not in opinions:
+                continue
+
+            user_opinion = opinions[user_id]
+            disagreements = []
+
+            for friend_id in user.following:
+                if friend_id in opinions:
+                    disagreements.append(abs(user_opinion - opinions[friend_id]))
+
+            if disagreements:
+                exposures.append(np.mean(disagreements))
+
+        if not exposures:
+            return {"mean": 0.0, "std": 0.0, "median": 0.0}
+
+        return {
+            "mean": float(np.mean(exposures)),
+            "std": float(np.std(exposures)),
+            "median": float(np.median(exposures)),
+        }
+
+    def compute_opinion_clusters(
+        self,
+        opinions: dict[str, float],
+        n_bins: int = 5,
+    ) -> dict[str, Any]:
+        """Analyze opinion distribution by clusters.
+
+        Args:
+            opinions: User opinions
+            n_bins: Number of bins for histogram
+
+        Returns:
+            Cluster analysis results
+        """
+        if not opinions:
+            return {}
+
+        values = list(opinions.values())
+
+        # Histogram
+        hist, bin_edges = np.histogram(values, bins=n_bins, range=(-1, 1))
+
+        # Find dominant clusters
+        dominant_idx = np.argmax(hist)
+
+        return {
+            "histogram": hist.tolist(),
+            "bin_edges": bin_edges.tolist(),
+            "dominant_cluster": int(dominant_idx),
+            "dominant_cluster_size": int(hist[dominant_idx]),
+            "n_clusters_above_10pct": int(np.sum(hist > len(values) * 0.1)),
+        }
+
+    def compute_all_metrics(
+        self,
+        users: dict[str, User],
+        opinions: dict[str, float] | None = None,
+        step: int | None = None,
+    ) -> dict[str, Any]:
+        """Compute all polarization metrics.
+
+        Args:
+            users: Dictionary of users
+            opinions: Optional explicit opinions (defaults to ideology)
+            step: Current step for history tracking
+
+        Returns:
+            Dictionary of all metrics
+        """
+        if opinions is None:
+            opinions = {u.user_id: u.traits.ideology for u in users.values()}
+
+        if not opinions:
+            return {}
+
+        opinion_values = list(opinions.values())
+
+        metrics = {
+            "n_users": len(opinions),
+            "mean_opinion": float(np.mean(opinion_values)),
+            "std_opinion": float(np.std(opinion_values)),
+            "variance": float(np.var(opinion_values)),
+            "bimodality_coefficient": self.compute_bimodality_coefficient(opinion_values),
+            "echo_chamber_index": self.compute_echo_chamber_index(users, opinions),
+            "disagreement_exposure": self.compute_disagreement_exposure(users, opinions),
+            "clusters": self.compute_opinion_clusters(opinions),
+            "min_opinion": float(np.min(opinion_values)),
+            "max_opinion": float(np.max(opinion_values)),
+            "range": float(np.max(opinion_values) - np.min(opinion_values)),
+        }
+
+        # Extreme opinion counts
+        metrics["extreme_left_pct"] = float(np.mean([v < -0.7 for v in opinion_values]))
+        metrics["extreme_right_pct"] = float(np.mean([v > 0.7 for v in opinion_values]))
+        metrics["moderate_pct"] = float(np.mean([abs(v) < 0.3 for v in opinion_values]))
+
+        if step is not None:
+            metrics["step"] = step
+            self.history.append(metrics)
+
+        return metrics
+
+    def get_trend(
+        self,
+        metric_name: str,
+        window: int = 10,
+    ) -> dict[str, float] | None:
+        """Get trend for a metric over time.
+
+        Args:
+            metric_name: Name of metric to analyze
+            window: Number of recent observations
+
+        Returns:
+            Trend statistics or None
+        """
+        if len(self.history) < 2:
+            return None
+
+        recent = self.history[-window:]
+        values = [m.get(metric_name) for m in recent if metric_name in m]
+
+        if len(values) < 2:
+            return None
+
+        # Simple linear regression for trend
+        x = np.arange(len(values))
+        slope, intercept = np.polyfit(x, values, 1)
+
+        return {
+            "slope": float(slope),
+            "intercept": float(intercept),
+            "start_value": float(values[0]),
+            "end_value": float(values[-1]),
+            "change": float(values[-1] - values[0]),
+            "change_pct": float((values[-1] - values[0]) / (abs(values[0]) + 1e-10)),
+        }
+
     def compute_content_metrics(
         self,
         state: SimulationState,

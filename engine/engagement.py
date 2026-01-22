@@ -7,9 +7,10 @@ import numpy as np
 from numpy.random import Generator
 
 from config.schemas import EngagementConfig
-from models import User, Post, Interaction
+from models import User, Post, Interaction, UserCognitiveState, InteractionMemory
 from models.enums import InteractionType
 from .state import SimulationState
+from .decision_model import UtilityBasedDecisionModel, DecisionType, DecisionConfig
 
 
 @dataclass
@@ -47,16 +48,36 @@ class EngagementModel:
         self,
         config: EngagementConfig,
         seed: int | None = None,
+        use_utility_model: bool = True,
+        attention_recovery_rate: float = 0.1,
+        emotional_decay_rate: float = 0.1,
     ):
         """Initialize engagement model.
 
         Args:
             config: Engagement configuration
             seed: Random seed
+            use_utility_model: Whether to use utility-based decisions
+            attention_recovery_rate: Rate of attention recovery per step
+            emotional_decay_rate: Rate of emotional state decay
         """
         self.config = config
         self.rng = np.random.default_rng(seed)
         self.interaction_counter = 0
+        self.use_utility_model = use_utility_model
+        self.attention_recovery_rate = attention_recovery_rate
+        self.emotional_decay_rate = emotional_decay_rate
+
+        # Initialize utility-based decision model
+        if self.use_utility_model:
+            self.decision_model = UtilityBasedDecisionModel(
+                config=DecisionConfig(
+                    emotional_decay_per_step=emotional_decay_rate,
+                ),
+                seed=seed,
+            )
+        else:
+            self.decision_model = None
 
     def calculate_engagement_probability(
         self,
@@ -64,8 +85,102 @@ class EngagementModel:
         post: Post,
         state: SimulationState,
         users: dict[str, User],
+        cognitive_state: UserCognitiveState | None = None,
     ) -> EngagementProbabilities:
         """Calculate engagement probabilities for a user-post pair.
+
+        Args:
+            user: User viewing the post
+            post: Post being viewed
+            state: Simulation state
+            users: Dictionary of all users
+            cognitive_state: User's cognitive state (for utility model)
+
+        Returns:
+            EngagementProbabilities object
+        """
+        # Use utility-based model if enabled
+        if self.use_utility_model and self.decision_model:
+            return self._calculate_utility_based_probabilities(
+                user, post, state, users, cognitive_state
+            )
+
+        # Fall back to original probabilistic model
+        return self._calculate_legacy_probabilities(user, post, state, users)
+
+    def _calculate_utility_based_probabilities(
+        self,
+        user: User,
+        post: Post,
+        state: SimulationState,
+        users: dict[str, User],
+        cognitive_state: UserCognitiveState | None = None,
+    ) -> EngagementProbabilities:
+        """Calculate probabilities using utility-based model.
+
+        Args:
+            user: User viewing the post
+            post: Post being viewed
+            state: Simulation state
+            users: Dictionary of all users
+            cognitive_state: User's cognitive state
+
+        Returns:
+            EngagementProbabilities object
+        """
+        # Get utility from decision model
+        utility = self.decision_model.compute_engagement_utility(
+            user, post, state, users, cognitive_state
+        )
+
+        # Get event effect
+        event_effect = state.get_combined_event_effect()
+        event_multiplier = event_effect.engagement_multiplier
+
+        # Convert utility to probabilities
+        # Utility (0-1) modulates base rates
+        utility_factor = 0.5 + utility  # Range: 0.5 to 1.5
+
+        view_prob = min(0.95, self.config.base_view_rate * utility_factor * event_multiplier)
+        like_prob = min(0.8, self.config.base_like_rate * utility_factor * event_multiplier)
+        share_prob = min(0.5, self.config.base_share_rate * utility_factor * event_multiplier * 0.7)
+        comment_prob = min(0.4, self.config.base_comment_rate * utility_factor * event_multiplier)
+
+        # Misinformation susceptibility effect
+        if post.content.is_misinformation:
+            misinfo_factor = 1 + user.traits.misinfo_susceptibility * event_effect.misinfo_boost * 0.5
+            like_prob *= misinfo_factor
+            share_prob *= misinfo_factor
+
+        # Cognitive state effects
+        if cognitive_state is not None:
+            # Depleted attention reduces engagement
+            attention_factor = 0.5 + 0.5 * cognitive_state.attention_budget
+            view_prob *= attention_factor
+            like_prob *= attention_factor
+            share_prob *= attention_factor
+            comment_prob *= attention_factor
+
+            # High arousal increases engagement
+            arousal_factor = 0.8 + 0.4 * cognitive_state.emotional_arousal
+            like_prob *= arousal_factor
+            share_prob *= arousal_factor
+
+        return EngagementProbabilities(
+            view=view_prob,
+            like=like_prob,
+            share=share_prob,
+            comment=comment_prob,
+        )
+
+    def _calculate_legacy_probabilities(
+        self,
+        user: User,
+        post: Post,
+        state: SimulationState,
+        users: dict[str, User],
+    ) -> EngagementProbabilities:
+        """Calculate probabilities using original model (backward compatibility).
 
         Args:
             user: User viewing the post
@@ -236,6 +351,7 @@ class EngagementModel:
         state: SimulationState,
         users: dict[str, User],
         source_user_id: str | None = None,
+        cognitive_state: UserCognitiveState | None = None,
     ) -> list[Interaction]:
         """Process user engagement with a post.
 
@@ -245,12 +361,15 @@ class EngagementModel:
             state: Simulation state
             users: All users
             source_user_id: User who exposed this user to the post
+            cognitive_state: User's cognitive state
 
         Returns:
             List of generated interactions
         """
         interactions = []
-        probs = self.calculate_engagement_probability(user, post, state, users)
+        probs = self.calculate_engagement_probability(
+            user, post, state, users, cognitive_state
+        )
 
         # Always attempt view first
         if self.rng.random() < probs.view:
@@ -260,6 +379,12 @@ class EngagementModel:
             interactions.append(view_interaction)
             post.record_view()
 
+            # Update cognitive state if available
+            if cognitive_state is not None:
+                self._update_cognitive_state_for_view(
+                    cognitive_state, post, state.current_step
+                )
+
             # Only consider other engagements if viewed
             if self.rng.random() < probs.like:
                 like_interaction = self._create_interaction(
@@ -268,12 +393,22 @@ class EngagementModel:
                 interactions.append(like_interaction)
                 post.record_like()
 
+                if cognitive_state is not None:
+                    self._update_cognitive_state_for_engagement(
+                        cognitive_state, post, "like", state.current_step
+                    )
+
             if self.rng.random() < probs.share:
                 share_interaction = self._create_interaction(
                     user, post, InteractionType.SHARE, state, source_user_id
                 )
                 interactions.append(share_interaction)
                 post.record_share()
+
+                if cognitive_state is not None:
+                    self._update_cognitive_state_for_engagement(
+                        cognitive_state, post, "share", state.current_step
+                    )
 
             if self.rng.random() < probs.comment:
                 comment_interaction = self._create_interaction(
@@ -282,7 +417,101 @@ class EngagementModel:
                 interactions.append(comment_interaction)
                 post.record_comment()
 
+                if cognitive_state is not None:
+                    self._update_cognitive_state_for_engagement(
+                        cognitive_state, post, "comment", state.current_step
+                    )
+
         return interactions
+
+    def _update_cognitive_state_for_view(
+        self,
+        cognitive_state: UserCognitiveState,
+        post: Post,
+        step: int,
+    ) -> None:
+        """Update cognitive state after viewing content.
+
+        Args:
+            cognitive_state: User's cognitive state
+            post: Viewed post
+            step: Current step
+        """
+        # Deplete attention (viewing has low cost)
+        cognitive_state.deplete_attention(0.02)
+
+        # Update emotional state based on content
+        content_valence = 0.0
+        if post.content.sentiment.value == "positive":
+            content_valence = 0.3
+        elif post.content.sentiment.value == "negative":
+            content_valence = -0.3
+
+        arousal_delta = post.content.emotional_intensity * 0.1
+
+        cognitive_state.update_emotional_state(
+            valence_delta=content_valence * 0.1,
+            arousal_delta=arousal_delta,
+            decay_rate=self.emotional_decay_rate,
+        )
+
+    def _update_cognitive_state_for_engagement(
+        self,
+        cognitive_state: UserCognitiveState,
+        post: Post,
+        engagement_type: str,
+        step: int,
+    ) -> None:
+        """Update cognitive state after engaging with content.
+
+        Args:
+            cognitive_state: User's cognitive state
+            post: Engaged post
+            engagement_type: Type of engagement
+            step: Current step
+        """
+        # Deplete attention based on engagement type
+        attention_costs = {"like": 0.03, "share": 0.08, "comment": 0.1}
+        cognitive_state.deplete_attention(attention_costs.get(engagement_type, 0.05))
+
+        # Calculate emotional impact
+        emotional_impact = 0.0
+        if engagement_type in ("like", "share"):
+            emotional_impact = 0.2  # Positive engagement
+        elif engagement_type == "comment":
+            # Comments can be positive or negative based on content
+            emotional_impact = 0.1 if post.content.controversy_score < 0.5 else -0.1
+
+        # Add to interaction memory
+        memory = InteractionMemory(
+            post_id=post.post_id,
+            author_id=post.author_id,
+            interaction_type=engagement_type,
+            step=step,
+            emotional_impact=emotional_impact,
+            topics=tuple(post.content.topics),
+        )
+        cognitive_state.add_interaction_memory(memory)
+
+        # Update opinion based on content ideology
+        cognitive_state.update_opinion(
+            influence=post.content.ideology_score,
+            influence_weight=0.05 if engagement_type == "share" else 0.02,
+        )
+
+    def recover_user_cognitive_state(
+        self,
+        cognitive_state: UserCognitiveState,
+    ) -> None:
+        """Recover user cognitive state between steps.
+
+        Called at the beginning of each step.
+
+        Args:
+            cognitive_state: User's cognitive state to recover
+        """
+        cognitive_state.recover_attention(self.attention_recovery_rate)
+        cognitive_state.update_emotional_state(0, 0, self.emotional_decay_rate)
 
     def _create_interaction(
         self,

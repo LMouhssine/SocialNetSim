@@ -1,4 +1,4 @@
-"""Viral cascade mechanics."""
+"""Viral cascade mechanics with Hawkes process support."""
 
 from typing import Any
 import uuid
@@ -10,6 +10,8 @@ from config.schemas import CascadeConfig
 from models import User, Post, Cascade, Interaction
 from models.enums import InteractionType
 from .state import SimulationState
+from .hawkes import CascadeHawkesProcess, HawkesConfig
+from .diffusion import InformationDiffusionModel, DiffusionConfig
 
 
 class CascadeEngine:
@@ -17,8 +19,9 @@ class CascadeEngine:
 
     Implements:
     - Cascade initialization and tracking
-    - Exposure-based spreading
+    - Exposure-based spreading with Hawkes processes
     - Threshold model for share decisions
+    - Information diffusion with fatigue and saturation
     - Cascade decay over time
     """
 
@@ -26,16 +29,56 @@ class CascadeEngine:
         self,
         config: CascadeConfig,
         seed: int | None = None,
+        use_hawkes: bool = True,
+        hawkes_baseline: float = 0.01,
+        hawkes_branching_ratio: float = 0.8,
+        hawkes_decay: float = 0.1,
+        saturation_constant: float = 100.0,
+        backlash_threshold: float = 0.3,
+        immunity_duration: int = 20,
+        enable_delayed_effects: bool = True,
     ):
         """Initialize cascade engine.
 
         Args:
             config: Cascade configuration
             seed: Random seed
+            use_hawkes: Whether to use Hawkes processes for timing
+            hawkes_baseline: Hawkes process baseline intensity
+            hawkes_branching_ratio: Expected offspring per event
+            hawkes_decay: Exponential decay rate
+            saturation_constant: Share count for 50% saturation
+            backlash_threshold: Threshold for backlash emergence
+            immunity_duration: Steps of immunity after sharing
+            enable_delayed_effects: Whether to enable delayed effects
         """
         self.config = config
         self.rng = np.random.default_rng(seed)
+        self.seed = seed
         self.cascade_counter = 0
+
+        # Hawkes process configuration
+        self.use_hawkes = use_hawkes
+        self.hawkes_config = HawkesConfig(
+            baseline=hawkes_baseline,
+            branching_ratio=hawkes_branching_ratio,
+            decay=hawkes_decay,
+        )
+
+        # Diffusion model configuration
+        self.diffusion_config = DiffusionConfig(
+            saturation_constant=saturation_constant,
+            backlash_threshold=int(backlash_threshold * 10),  # Convert to exposure count
+            immunity_duration=immunity_duration,
+        )
+
+        # Per-cascade Hawkes processes and diffusion states
+        self.hawkes_processes: dict[str, CascadeHawkesProcess] = {}
+        self.diffusion_model = InformationDiffusionModel(
+            self.diffusion_config, seed=seed
+        )
+
+        self.enable_delayed_effects = enable_delayed_effects
 
     def initialize_cascade(
         self,
@@ -64,6 +107,25 @@ class CascadeEngine:
 
         # Link post to cascade
         post.cascade_id = cascade_id
+
+        # Initialize Hawkes process for this cascade
+        if self.use_hawkes:
+            hawkes = CascadeHawkesProcess(
+                baseline=self.hawkes_config.baseline,
+                branching_ratio=self.hawkes_config.branching_ratio,
+                decay=self.hawkes_config.decay,
+                virality_boost=post.virality_score,
+                seed=self.seed,
+            )
+            hawkes.initialize_cascade(
+                start_time=float(state.current_step),
+                virality_score=post.virality_score,
+                author_influence=author.influence_score,
+            )
+            self.hawkes_processes[cascade_id] = hawkes
+
+        # Initialize diffusion tracking
+        self.diffusion_model.initialize_cascade(cascade_id, [author.user_id])
 
         return cascade
 
@@ -163,8 +225,8 @@ class CascadeEngine:
     ) -> float:
         """Calculate probability of user being exposed to cascading content.
 
-        exposure_factor = base_rate * (1 + log(shares) * 0.1) *
-                         (1 + virality_potential * 0.5) * decay
+        Uses Hawkes process intensity if enabled, otherwise falls back to
+        original calculation.
 
         Args:
             user: User who might be exposed
@@ -175,7 +237,28 @@ class CascadeEngine:
         Returns:
             Exposure probability
         """
-        # Base spread rate
+        # Use Hawkes intensity if available
+        if self.use_hawkes and cascade.cascade_id in self.hawkes_processes:
+            hawkes = self.hawkes_processes[cascade.cascade_id]
+            intensity = hawkes.get_current_intensity(float(state.current_step))
+
+            # Convert intensity to probability
+            # Higher intensity = higher exposure probability
+            base_prob = self.config.base_spread_rate
+            hawkes_factor = 1 + intensity / self.hawkes_config.baseline
+
+            # Apply saturation from diffusion model
+            saturation = self.diffusion_model.calculate_saturation(cascade.total_shares)
+            saturation_factor = 1 - saturation * 0.5
+
+            # Event effect
+            event_effect = state.get_combined_event_effect()
+            event_factor = event_effect.engagement_multiplier
+
+            exposure_prob = base_prob * hawkes_factor * saturation_factor * event_factor
+            return min(0.9, exposure_prob)
+
+        # Fallback to original calculation
         base_rate = self.config.base_spread_rate
 
         # Share velocity boost
@@ -303,6 +386,20 @@ class CascadeEngine:
         """
         cascade.record_share(user.user_id, source_user_id, state.current_step)
 
+        # Update Hawkes process
+        if self.use_hawkes and cascade.cascade_id in self.hawkes_processes:
+            hawkes = self.hawkes_processes[cascade.cascade_id]
+            hawkes.record_share(float(state.current_step), user.user_id)
+
+        # Update diffusion model
+        self.diffusion_model.process_infection(
+            cascade.cascade_id,
+            user.user_id,
+            state.current_step,
+            base_share_prob=1.0,  # Already shared
+            friend_count_shared=0,
+        )
+
     def _should_deactivate(
         self,
         cascade: Cascade,
@@ -377,3 +474,99 @@ class CascadeEngine:
             cascade for cascade in state.cascades.values()
             if cascade.total_shares >= min_shares
         ]
+
+    def get_hawkes_share_probability(
+        self,
+        cascade: Cascade,
+        state: SimulationState,
+        base_share_prob: float,
+    ) -> float:
+        """Get share probability modulated by Hawkes intensity.
+
+        Args:
+            cascade: Cascade
+            state: Simulation state
+            base_share_prob: Base share probability
+
+        Returns:
+            Modulated share probability
+        """
+        if not self.use_hawkes or cascade.cascade_id not in self.hawkes_processes:
+            return base_share_prob
+
+        hawkes = self.hawkes_processes[cascade.cascade_id]
+        return hawkes.get_share_probability(
+            float(state.current_step),
+            base_share_prob,
+        )
+
+    def get_expected_cascade_growth(
+        self,
+        cascade: Cascade,
+        state: SimulationState,
+        future_steps: int = 10,
+    ) -> float:
+        """Predict expected cascade growth using Hawkes process.
+
+        Args:
+            cascade: Cascade to predict
+            state: Simulation state
+            future_steps: Steps to predict ahead
+
+        Returns:
+            Expected number of new shares
+        """
+        if not self.use_hawkes or cascade.cascade_id not in self.hawkes_processes:
+            # Fallback: simple extrapolation from current velocity
+            velocity = cascade.get_velocity(state.current_step)
+            return velocity * future_steps
+
+        hawkes = self.hawkes_processes[cascade.cascade_id]
+        t_now = float(state.current_step)
+        return hawkes.get_expected_shares(t_now, t_now + future_steps)
+
+    def get_effective_reproduction_number(
+        self,
+        cascade: Cascade,
+    ) -> float:
+        """Get effective reproduction number R_t for cascade.
+
+        Args:
+            cascade: Cascade to analyze
+
+        Returns:
+            Effective R value
+        """
+        return self.diffusion_model.get_effective_reproduction_number(
+            cascade.cascade_id,
+            cascade.total_shares,
+        )
+
+    def step_diffusion(self, state: SimulationState) -> None:
+        """Process one step for all cascade diffusions.
+
+        Updates fatigue, immunity, and recovery states.
+
+        Args:
+            state: Simulation state
+        """
+        for cascade in state.cascades.values():
+            self.diffusion_model.step_cascade(cascade.cascade_id, state.current_step)
+
+    def get_cascade_diffusion_stats(self, cascade: Cascade) -> dict[str, Any]:
+        """Get diffusion statistics for a cascade.
+
+        Args:
+            cascade: Cascade to analyze
+
+        Returns:
+            Dictionary of diffusion statistics
+        """
+        base_stats = self.get_cascade_statistics(cascade, None)
+        diffusion_stats = self.diffusion_model.get_cascade_statistics(cascade.cascade_id)
+
+        return {
+            **base_stats,
+            "diffusion": diffusion_stats,
+            "effective_R": self.get_effective_reproduction_number(cascade),
+        }

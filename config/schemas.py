@@ -103,6 +103,12 @@ class EngagementConfig(BaseModel):
     fatigue_recovery: float = Field(default=0.2, description="Recovery rate for user fatigue")
     max_fatigue: float = Field(default=1.0, ge=0.0, le=2.0)
 
+    # Utility-based decision model (Phase 2)
+    use_utility_model: bool = Field(default=True, description="Use utility-based decisions")
+    attention_recovery_rate: float = Field(default=0.1, ge=0.0, le=1.0)
+    emotional_decay_rate: float = Field(default=0.1, ge=0.0, le=1.0)
+    memory_length: int = Field(default=100, ge=10, le=1000)
+
 
 class FeedConfig(BaseModel):
     """Configuration for feed ranking algorithms."""
@@ -115,6 +121,13 @@ class FeedConfig(BaseModel):
     diversity_penalty: float = Field(default=0.1, description="Penalty for showing similar content")
     seen_penalty: float = Field(default=0.5, description="Penalty for previously seen posts")
 
+    # Enhanced ranking (Phase 3)
+    controversy_amplification_weight: float = Field(default=0.1, ge=0.0, le=1.0)
+    controversy_cap: float = Field(default=0.3, ge=0.0, le=1.0, description="Max controversy boost")
+    social_proximity_weight: float = Field(default=0.2, ge=0.0, le=1.0)
+    use_bandit_optimization: bool = Field(default=False)
+    bandit_type: str = Field(default="thompson", pattern="^(thompson|linucb)$")
+
 
 class CascadeConfig(BaseModel):
     """Configuration for viral cascade mechanics."""
@@ -125,6 +138,18 @@ class CascadeConfig(BaseModel):
     threshold_min: int = Field(default=1, ge=1, description="Min friends who shared before user considers sharing")
     threshold_max: int = Field(default=5, ge=1, description="Max threshold for threshold model")
     decay_rate: float = Field(default=0.05, ge=0.0, le=1.0)
+
+    # Hawkes process settings (Phase 4)
+    use_hawkes: bool = Field(default=True, description="Use Hawkes processes for virality")
+    hawkes_baseline: float = Field(default=0.01, ge=0.0, le=1.0)
+    hawkes_branching_ratio: float = Field(default=0.8, ge=0.0, le=2.0)
+    hawkes_decay: float = Field(default=0.1, ge=0.0, le=1.0)
+
+    # Information diffusion settings (Phase 4)
+    saturation_constant: float = Field(default=100.0, ge=1.0, description="Share count for 50% saturation")
+    backlash_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
+    immunity_duration: int = Field(default=20, ge=1, description="Steps of immunity after sharing")
+    enable_delayed_effects: bool = Field(default=True)
 
 
 class ModerationConfig(BaseModel):
@@ -189,6 +214,35 @@ class AIConfig(BaseModel):
         }
     )
 
+    # Enhanced ML features (Phase 7)
+    enhanced_features: bool = Field(default=True, description="Use enhanced feature extraction")
+    user_embedding_dim: int = Field(default=64, ge=8, le=256)
+    experiment_logging: bool = Field(default=True)
+
+
+class OpinionDynamicsConfig(BaseModel):
+    """Configuration for opinion dynamics (Phase 5)."""
+
+    enabled: bool = Field(default=True, description="Enable opinion dynamics")
+    confidence_bound: float = Field(default=0.3, ge=0.0, le=1.0, description="Max opinion difference for interaction")
+    convergence_rate: float = Field(default=0.1, ge=0.0, le=1.0, description="Opinion convergence rate")
+    content_influence_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    peer_influence_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    stubbornness_threshold: float = Field(default=0.8, ge=0.0, le=1.0, description="Opinion confidence for stubbornness")
+
+
+class PerformanceConfig(BaseModel):
+    """Configuration for high-performance simulation (Phase 6)."""
+
+    use_vectorized: bool = Field(default=True, description="Use vectorized operations")
+    batch_size: int = Field(default=1000, ge=100, le=100000)
+    use_parallel: bool = Field(default=False, description="Use parallel processing")
+    n_workers: int = Field(default=4, ge=1, le=32)
+    max_memory_gb: float = Field(default=8.0, ge=1.0, le=64.0)
+    interaction_retention_steps: int = Field(default=100, ge=10, description="Steps to retain interactions")
+    prune_frequency: int = Field(default=10, ge=1, description="Steps between memory pruning")
+    gc_frequency: int = Field(default=50, ge=1, description="Steps between garbage collection")
+
 
 class SimulationConfig(BaseModel):
     """Main simulation configuration."""
@@ -208,6 +262,10 @@ class SimulationConfig(BaseModel):
     moderation: ModerationConfig = Field(default_factory=ModerationConfig)
     events: EventConfig = Field(default_factory=EventConfig)
     ai: AIConfig = Field(default_factory=AIConfig)
+
+    # New configurations (Phases 5-6)
+    opinion_dynamics: OpinionDynamicsConfig = Field(default_factory=OpinionDynamicsConfig)
+    performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
 
     # Output settings
     log_level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR)$")
