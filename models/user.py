@@ -308,6 +308,8 @@ class UserTraits:
         misinfo_susceptibility: Likelihood to believe/share misinformation (0-1)
         emotional_reactivity: Response to emotional content (0-1)
         activity_level: Base activity rate (0-1)
+        openness: Openness to differing opinions (0-1)
+        conscientiousness: Task diligence / regulation tendency (0-1)
     """
 
     ideology: float = 0.0
@@ -315,6 +317,8 @@ class UserTraits:
     misinfo_susceptibility: float = 0.2
     emotional_reactivity: float = 0.5
     activity_level: float = 0.3
+    openness: float = 0.5
+    conscientiousness: float = 0.5
 
     def __post_init__(self) -> None:
         """Validate trait ranges."""
@@ -323,6 +327,8 @@ class UserTraits:
         self.misinfo_susceptibility = np.clip(self.misinfo_susceptibility, 0.0, 1.0)
         self.emotional_reactivity = np.clip(self.emotional_reactivity, 0.0, 1.0)
         self.activity_level = np.clip(self.activity_level, 0.0, 1.0)
+        self.openness = np.clip(self.openness, 0.0, 1.0)
+        self.conscientiousness = np.clip(self.conscientiousness, 0.0, 1.0)
 
     def to_dict(self) -> dict[str, float]:
         """Convert traits to dictionary."""
@@ -332,6 +338,8 @@ class UserTraits:
             "misinfo_susceptibility": self.misinfo_susceptibility,
             "emotional_reactivity": self.emotional_reactivity,
             "activity_level": self.activity_level,
+            "openness": self.openness,
+            "conscientiousness": self.conscientiousness,
         }
 
     @classmethod

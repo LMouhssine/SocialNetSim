@@ -166,7 +166,7 @@ class Simulation:
 
         # Populate from user objects
         for i, user in enumerate(users_list):
-            self.vectorized_user_state.activity_level[i] = user.activity_level
+            self.vectorized_user_state.activity_level[i] = user.traits.activity_level
             self.vectorized_user_state.influence_score[i] = user.influence_score
             self.vectorized_user_state.follower_count[i] = len(user.followers)
             self.vectorized_user_state.following_count[i] = len(user.following)
@@ -371,7 +371,7 @@ class Simulation:
                     if author and author.user_id != user.user_id:
                         # Peer influence from post author
                         self.opinion_engine.process_peer_interaction(
-                            user, author, self.state.current_step
+                            user.user_id, author.user_id, self.state.current_step
                         )
 
                     # Content influence from post topic
@@ -380,11 +380,14 @@ class Simulation:
                         # Estimate content stance based on topic
                         content_stance = self._estimate_content_stance(post)
                         self.opinion_engine.process_content_exposure(
-                            user, content_stance, self.state.current_step
+                            user.user_id,
+                            content_stance,
+                            interaction.interaction_type.value,
+                            self.state.current_step,
                         )
 
         # Step the opinion dynamics model
-        self.opinion_engine.step(self.state.current_step, self.world.users)
+        self.opinion_engine.step(self.state.current_step)
 
     def _estimate_content_stance(self, post: Post) -> float:
         """Estimate stance/opinion expressed in post content.

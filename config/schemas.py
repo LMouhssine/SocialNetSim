@@ -37,6 +37,12 @@ class UserTraitsConfig(BaseModel):
     activity_level: DistributionConfig = Field(
         default_factory=lambda: DistributionConfig(type="beta", alpha=2.0, beta=5.0)
     )
+    openness: DistributionConfig = Field(
+        default_factory=lambda: DistributionConfig(type="beta", alpha=2.0, beta=2.0)
+    )
+    conscientiousness: DistributionConfig = Field(
+        default_factory=lambda: DistributionConfig(type="beta", alpha=2.0, beta=5.0)
+    )
 
 
 class UserConfig(BaseModel):

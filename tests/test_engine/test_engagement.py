@@ -29,6 +29,8 @@ class TestEngagementModel:
                 misinfo_susceptibility=0.3,
                 emotional_reactivity=0.5,
                 activity_level=0.6,
+                openness=0.6,
+                conscientiousness=0.4,
             ),
         )
 

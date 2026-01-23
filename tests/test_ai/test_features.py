@@ -51,6 +51,8 @@ class TestFeatureExtractor:
                 misinfo_susceptibility=0.2,
                 emotional_reactivity=0.5,
                 activity_level=0.7,
+                openness=0.45,
+                conscientiousness=0.55,
             ),
             followers=["f1", "f2", "f3"],
             following=["u1", "u2"],

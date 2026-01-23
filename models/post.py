@@ -159,6 +159,47 @@ class Post:
         """Check if post contains misinformation."""
         return self.content.is_misinformation
 
+    @property
+    def topics(self) -> list[str]:
+        """Return list of topics associated with the post."""
+        return list(self.content.topics)
+
+    @property
+    def quality_score(self) -> float:
+        """Pass-through to content quality score."""
+        return self.content.quality_score
+
+    @property
+    def controversy_score(self) -> float:
+        """Pass-through to content controversy score."""
+        return self.content.controversy_score
+
+    @property
+    def ideology_score(self) -> float:
+        """Pass-through to content ideology score."""
+        return self.content.ideology_score
+
+    @property
+    def emotional_intensity(self) -> float:
+        """Pass-through to content emotional intensity."""
+        return self.content.emotional_intensity
+
+    @property
+    def sentiment(self) -> float:
+        """Numeric sentiment for downstream models."""
+        return self._sentiment_to_value(self.content.sentiment)
+
+    @staticmethod
+    def _sentiment_to_value(sentiment: Sentiment) -> float:
+        """Map Sentiment enum to [-1, 1] scale."""
+        mapping = {
+            Sentiment.POSITIVE: 1.0,
+            Sentiment.NEGATIVE: -1.0,
+            Sentiment.NEUTRAL: 0.0,
+            Sentiment.MIXED: 0.0,
+        }
+        return mapping.get(sentiment, 0.0)
+
     def record_view(self) -> None:
         """Record a view."""
         self.view_count += 1

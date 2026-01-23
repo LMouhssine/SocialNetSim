@@ -89,6 +89,8 @@ class UserGenerator:
         misinfo_susceptibility = float(sample_from_config(self.rng, traits_config.misinfo_susceptibility))
         emotional_reactivity = float(sample_from_config(self.rng, traits_config.emotional_reactivity))
         activity_level = float(sample_from_config(self.rng, traits_config.activity_level))
+        openness = float(sample_from_config(self.rng, traits_config.openness))
+        conscientiousness = float(sample_from_config(self.rng, traits_config.conscientiousness))
 
         return UserTraits(
             ideology=ideology,
@@ -96,6 +98,8 @@ class UserGenerator:
             misinfo_susceptibility=misinfo_susceptibility,
             emotional_reactivity=emotional_reactivity,
             activity_level=activity_level,
+            openness=openness,
+            conscientiousness=conscientiousness,
         )
 
     def _generate_interests(

@@ -35,15 +35,20 @@ class VectorizedUserState:
     """
 
     n_users: int
-    user_ids: np.ndarray
-    user_id_to_idx: dict[str, int] = field(default_factory=dict)
+    user_ids: np.ndarray | None = None
+    user_id_to_idx: dict[str, int] | None = None
 
     # Trait arrays (immutable during simulation)
     ideology: np.ndarray = field(default=None)
     confirmation_bias: np.ndarray = field(default=None)
+    openness: np.ndarray = field(default=None)
+    conscientiousness: np.ndarray = field(default=None)
     misinfo_susceptibility: np.ndarray = field(default=None)
     emotional_reactivity: np.ndarray = field(default=None)
     activity_level: np.ndarray = field(default=None)
+    influence_score: np.ndarray = field(default=None)
+    follower_count: np.ndarray = field(default=None)
+    following_count: np.ndarray = field(default=None)
 
     # Dynamic state arrays
     fatigue: np.ndarray = field(default=None)
@@ -60,16 +65,31 @@ class VectorizedUserState:
 
     def __post_init__(self):
         """Initialize arrays if not provided."""
+        if self.user_ids is None:
+            self.user_ids = np.array([f"user_{i}" for i in range(self.n_users)], dtype=object)
+        if self.user_id_to_idx is None or len(self.user_id_to_idx) != self.n_users:
+            self.user_id_to_idx = {uid: i for i, uid in enumerate(self.user_ids)}
+
         if self.ideology is None:
             self.ideology = np.zeros(self.n_users, dtype=np.float32)
         if self.confirmation_bias is None:
             self.confirmation_bias = np.zeros(self.n_users, dtype=np.float32)
+        if self.openness is None:
+            self.openness = np.zeros(self.n_users, dtype=np.float32)
+        if self.conscientiousness is None:
+            self.conscientiousness = np.zeros(self.n_users, dtype=np.float32)
         if self.misinfo_susceptibility is None:
             self.misinfo_susceptibility = np.zeros(self.n_users, dtype=np.float32)
         if self.emotional_reactivity is None:
             self.emotional_reactivity = np.zeros(self.n_users, dtype=np.float32)
         if self.activity_level is None:
             self.activity_level = np.ones(self.n_users, dtype=np.float32) * 0.3
+        if self.influence_score is None:
+            self.influence_score = np.zeros(self.n_users, dtype=np.float32)
+        if self.follower_count is None:
+            self.follower_count = np.zeros(self.n_users, dtype=np.int32)
+        if self.following_count is None:
+            self.following_count = np.zeros(self.n_users, dtype=np.int32)
         if self.fatigue is None:
             self.fatigue = np.zeros(self.n_users, dtype=np.float32)
         if self.attention_budget is None:
@@ -114,6 +134,9 @@ class VectorizedUserState:
             state.emotional_reactivity[idx] = user.traits.emotional_reactivity
             state.activity_level[idx] = user.traits.activity_level
             state.opinions[idx] = user.traits.ideology  # Initialize opinion from ideology
+            state.influence_score[idx] = user.influence_score
+            state.follower_count[idx] = len(user.followers)
+            state.following_count[idx] = len(user.following)
 
         # Build follower/following sparse matrices
         rows, cols = [], []
@@ -182,14 +205,16 @@ class VectorizedPostState:
     """
 
     n_posts: int
-    post_ids: np.ndarray
-    post_id_to_idx: dict[str, int] = field(default_factory=dict)
+    post_ids: np.ndarray | None = None
+    post_id_to_idx: dict[str, int] | None = None
     author_idx: np.ndarray = field(default=None)
     created_step: np.ndarray = field(default=None)
     quality_score: np.ndarray = field(default=None)
     controversy_score: np.ndarray = field(default=None)
     ideology_score: np.ndarray = field(default=None)
     emotional_intensity: np.ndarray = field(default=None)
+    virality_score: np.ndarray = field(default=None)
+    sentiment: np.ndarray = field(default=None)
     is_misinformation: np.ndarray = field(default=None)
     view_count: np.ndarray = field(default=None)
     like_count: np.ndarray = field(default=None)
@@ -198,6 +223,10 @@ class VectorizedPostState:
 
     def __post_init__(self):
         """Initialize arrays."""
+        if self.post_ids is None:
+            self.post_ids = np.array([f"post_{i}" for i in range(self.n_posts)], dtype=object)
+        if self.post_id_to_idx is None or len(self.post_id_to_idx) != self.n_posts:
+            self.post_id_to_idx = {pid: i for i, pid in enumerate(self.post_ids)}
         if self.author_idx is None:
             self.author_idx = np.zeros(self.n_posts, dtype=np.int32)
         if self.created_step is None:
@@ -210,6 +239,10 @@ class VectorizedPostState:
             self.ideology_score = np.zeros(self.n_posts, dtype=np.float32)
         if self.emotional_intensity is None:
             self.emotional_intensity = np.zeros(self.n_posts, dtype=np.float32)
+        if self.virality_score is None:
+            self.virality_score = np.zeros(self.n_posts, dtype=np.float32)
+        if self.sentiment is None:
+            self.sentiment = np.zeros(self.n_posts, dtype=np.float32)
         if self.is_misinformation is None:
             self.is_misinformation = np.zeros(self.n_posts, dtype=np.bool_)
         if self.view_count is None:

@@ -320,6 +320,14 @@ class OpinionDynamicsEngine:
         self.opinion_states[user.user_id] = state
         return state
 
+    def initialize_users(
+        self,
+        users: dict[str, User],
+    ) -> None:
+        """Initialize opinion states for a collection of users."""
+        for user in users.values():
+            self.initialize_user(user)
+
     def get_opinion_state(self, user_id: str) -> OpinionState | None:
         """Get user's opinion state.
 
