@@ -33,6 +33,7 @@ class StepMetrics:
     misinfo_shares: int = 0
     moderation_actions: int = 0
     active_events: int = 0
+    additional_metrics: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -54,6 +55,7 @@ class StepMetrics:
             "misinfo_shares": self.misinfo_shares,
             "moderation_actions": self.moderation_actions,
             "active_events": self.active_events,
+            "additional_metrics": self.additional_metrics,
         }
 
 
@@ -318,6 +320,35 @@ class MetricsCollector:
             "ideology_mean": float(np.mean(ideologies)),
             "ideology_skewness": skewness,
             "bimodality_coefficient": float(bimodality),
+        }
+
+    def compute_content_metrics(
+        self,
+        state: SimulationState,
+    ) -> dict[str, Any]:
+        """Compute content-level metrics."""
+        posts = list(state.posts.values())
+
+        if not posts:
+            return {}
+
+        quality_scores = [p.content.quality_score for p in posts]
+        controversy_scores = [p.content.controversy_score for p in posts]
+        engagement_counts = [p.total_engagement for p in posts]
+        virality_scores = [p.virality_score for p in posts]
+
+        misinfo_count = sum(1 for p in posts if p.content.is_misinformation)
+        misinfo_rate = misinfo_count / len(posts)
+
+        return {
+            "total_posts": len(posts),
+            "avg_quality": float(np.mean(quality_scores)),
+            "avg_controversy": float(np.mean(controversy_scores)),
+            "avg_engagement": float(np.mean(engagement_counts)),
+            "avg_virality": float(np.mean(virality_scores)),
+            "max_engagement": int(np.max(engagement_counts)),
+            "misinformation_rate": misinfo_rate,
+            "misinfo_count": misinfo_count,
         }
 
 

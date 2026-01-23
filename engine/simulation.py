@@ -553,14 +553,14 @@ class Simulation:
                 self.vectorized_post_state.view_count[i] = post.view_count
                 self.vectorized_post_state.like_count[i] = post.like_count
                 self.vectorized_post_state.share_count[i] = post.share_count
-                self.vectorized_post_state.is_active[i] = post.is_active
+                self.vectorized_post_state.is_active[i] = post.is_active()
 
     def _sync_vectorized_user_state(self) -> None:
         """Synchronize vectorized user state from runtime state."""
         for i, user in enumerate(self._users_list):
-            runtime = self.state.runtime_states.get(user.user_id)
+            runtime = self.state.user_states.get(user.user_id)
             if runtime:
-                self.vectorized_user_state.fatigue[i] = runtime.fatigue_level
+                self.vectorized_user_state.fatigue[i] = runtime.fatigue
                 self.vectorized_user_state.session_interactions[i] = runtime.session_interactions
                 self.vectorized_user_state.last_active_step[i] = runtime.last_active_step
 

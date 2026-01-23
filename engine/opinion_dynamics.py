@@ -428,6 +428,23 @@ class OpinionDynamicsEngine:
         opinions = [s.opinion for s in self.opinion_states.values()]
         return float(np.var(opinions))
 
+    def compute_polarization_metrics(
+        self,
+        users: dict[str, User] | None = None,
+    ) -> dict[str, float | dict[str, list[str]]]:
+        """Compute a bundle of polarization-related metrics."""
+        metrics: dict[str, float | dict[str, list[str]]] = {
+            "polarization": self.compute_polarization(),
+            "bimodality": self.compute_bimodality(),
+        }
+
+        if users is not None:
+            metrics["echo_chamber_index"] = self.compute_echo_chamber_index(users)
+            metrics["disagreement_exposure"] = self.compute_disagreement_exposure(users)
+            metrics["clusters"] = self.get_opinion_clusters()
+
+        return metrics
+
     def compute_bimodality(self) -> float:
         """Compute bimodality coefficient (Sarle's).
 

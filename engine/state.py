@@ -368,7 +368,22 @@ class SimulationState:
         }
 
         with open(path, "w") as f:
-            json.dump(state_data, f)
+            json.dump(self._to_json_safe(state_data), f)
+
+    @staticmethod
+    def _to_json_safe(value: Any) -> Any:
+        """Convert numpy/scalar containers to JSON-serializable types."""
+        if isinstance(value, dict):
+            return {k: SimulationState._to_json_safe(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [SimulationState._to_json_safe(v) for v in value]
+        if isinstance(value, tuple):
+            return [SimulationState._to_json_safe(v) for v in value]
+        if isinstance(value, set):
+            return [SimulationState._to_json_safe(v) for v in value]
+        if isinstance(value, np.generic):
+            return value.item()
+        return value
 
     @classmethod
     def load_from_dict(cls, state_data: dict[str, Any], users: dict[str, User]) -> "SimulationState":
