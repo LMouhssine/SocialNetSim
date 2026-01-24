@@ -226,3 +226,7 @@ def render():
         "simulation_metrics.csv",
         "text/csv",
     )
+
+
+if __name__ == "__main__":
+    render()

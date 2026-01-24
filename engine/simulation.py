@@ -45,7 +45,7 @@ class Simulation:
 
     def __init__(
         self,
-        config: SimulationConfig,
+        config: SimulationConfig | World,
         use_vectorized: bool = True,
         use_opinion_dynamics: bool = True,
         batch_config: BatchConfig | None = None,
@@ -60,6 +60,11 @@ class Simulation:
             batch_config: Configuration for batch processing
             memory_config: Configuration for memory management
         """
+        world: World | None = None
+        if isinstance(config, World):
+            world = config
+            config = world.config
+
         self.config = config
         self.seed = config.seed
         self.use_vectorized = use_vectorized
@@ -96,6 +101,10 @@ class Simulation:
         self.step_callbacks: list[Callable[[int, StepMetrics], None]] = []
 
         self._initialized = False
+
+        # Backward-compatible auto-initialize when a World is provided.
+        if world is not None:
+            self.initialize(world)
 
     def initialize(self, world: World | None = None) -> "Simulation":
         """Initialize simulation with world and components.
@@ -210,6 +219,7 @@ class Simulation:
         num_steps: int | None = None,
         show_progress: bool = True,
         use_vectorized_step: bool | None = None,
+        steps: int | None = None,
     ) -> dict[str, Any]:
         """Run the simulation.
 
@@ -221,8 +231,14 @@ class Simulation:
         Returns:
             Summary results dictionary
         """
+        if num_steps is None and steps is not None:
+            num_steps = steps
+
         if not self._initialized:
-            raise RuntimeError("Simulation not initialized - call initialize() first")
+            if self.world is not None:
+                self.initialize(self.world)
+            else:
+                raise RuntimeError("Simulation not initialized - call initialize() first")
 
         num_steps = num_steps or self.config.num_steps
         use_vec = use_vectorized_step if use_vectorized_step is not None else self.use_vectorized
@@ -252,6 +268,25 @@ class Simulation:
 
         logger.info("Simulation complete")
         return self.get_results()
+
+    def step(self, use_vectorized_step: bool | None = None) -> StepMetrics:
+        """Run a single simulation step (backward-compatible)."""
+        if not self._initialized:
+            if self.world is not None:
+                self.initialize(self.world)
+            else:
+                raise RuntimeError("Simulation not initialized - call initialize() first")
+
+        use_vec = use_vectorized_step if use_vectorized_step is not None else self.use_vectorized
+        if use_vec and self.vectorized_user_state is not None:
+            step_metrics = self._run_step_vectorized()
+        else:
+            step_metrics = self._run_step()
+
+        for callback in self.step_callbacks:
+            callback(self.state.current_step, step_metrics)
+
+        return step_metrics
 
     def _run_step(self) -> StepMetrics:
         """Run a single simulation step.
@@ -747,6 +782,45 @@ class Simulation:
             callback: Function taking (step, metrics)
         """
         self.step_callbacks.append(callback)
+
+    @property
+    def current_step(self) -> int:
+        """Backward-compatible current step property."""
+        return self.state.current_step if self.state else 0
+
+    @property
+    def posts(self) -> dict[str, Post]:
+        """Backward-compatible posts mapping."""
+        return self.state.posts if self.state else {}
+
+    @property
+    def interactions(self) -> list[Interaction]:
+        """Backward-compatible interactions list."""
+        return self.state.interactions if self.state else []
+
+    def get_metrics_history(self) -> list[dict[str, Any]]:
+        """Backward-compatible metrics history accessor."""
+        if self.state and self.state.step_metrics:
+            return self.state.step_metrics
+        if self.metrics_collector:
+            return [m.to_dict() for m in self.metrics_collector.step_metrics]
+        return []
+
+    def get_post(self, post_id: str) -> Post | None:
+        """Backward-compatible post lookup."""
+        if not self.state:
+            return None
+        return self.state.get_post(post_id)
+
+    def get_user_feed(self, user_id: str) -> list[Post]:
+        """Backward-compatible user feed retrieval."""
+        if not self.state or not self.feed_ranker or not self.world:
+            return []
+        user = self.world.users.get(user_id)
+        if not user:
+            return []
+        candidates = self.feed_ranker.get_candidate_posts(user, self.state)
+        return self.feed_ranker.rank_feed(user, candidates, self.state)
 
     def save(self, path: str | Path) -> None:
         """Save simulation state.

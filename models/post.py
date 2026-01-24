@@ -1,7 +1,7 @@
 """Post and content models."""
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -34,8 +34,85 @@ class PostContent:
     is_misinformation: bool = False
     text_length: int = 100
 
+    def __init__(
+        self,
+        topics: Iterable[str] | dict[str, float] | None = None,
+        topic_weights: dict[str, float] | None = None,
+        sentiment: Sentiment | str | float = Sentiment.NEUTRAL,
+        emotions: dict[str, float] | None = None,
+        quality_score: float = 0.5,
+        controversy_score: float = 0.0,
+        ideology_score: float = 0.0,
+        is_misinformation: bool = False,
+        text_length: int = 100,
+        emotional_intensity: float | None = None,
+    ) -> None:
+        """Initialize PostContent with backward-compatible inputs."""
+        if topics is None:
+            topics_set = set()
+        elif isinstance(topics, dict):
+            topics_set = set(topics.keys())
+            if not topic_weights:
+                topic_weights = dict(topics)
+        else:
+            topics_set = set(topics)
+
+        if topic_weights is None:
+            topic_weights = {}
+
+        if emotions is None:
+            emotions = {}
+
+        if emotional_intensity is not None and not emotions:
+            emotions = {"legacy": float(emotional_intensity)}
+
+        # Normalize sentiment input
+        sentiment_value: Sentiment
+        if isinstance(sentiment, Sentiment):
+            sentiment_value = sentiment
+        elif isinstance(sentiment, (int, float)):
+            if sentiment > 0.1:
+                sentiment_value = Sentiment.POSITIVE
+            elif sentiment < -0.1:
+                sentiment_value = Sentiment.NEGATIVE
+            else:
+                sentiment_value = Sentiment.NEUTRAL
+        else:
+            try:
+                sentiment_value = Sentiment(str(sentiment))
+            except ValueError:
+                sentiment_value = Sentiment.NEUTRAL
+
+        self.topics = topics_set
+        self.topic_weights = dict(topic_weights)
+        self.sentiment = sentiment_value
+        self.emotions = emotions
+        self.quality_score = quality_score
+        self.controversy_score = controversy_score
+        self.ideology_score = ideology_score
+        self.is_misinformation = is_misinformation
+        self.text_length = text_length
+
+        self.__post_init__()
+
     def __post_init__(self) -> None:
         """Validate content attributes."""
+        # Normalize topic structures
+        if isinstance(self.topics, dict):
+            # Defensive: handle legacy dict usage
+            legacy_topics = self.topics
+            self.topics = set(legacy_topics.keys())
+            if not self.topic_weights:
+                self.topic_weights = dict(legacy_topics)
+
+        # Ensure topic_weights covers all topics
+        for topic in list(self.topic_weights.keys()):
+            if topic not in self.topics:
+                self.topics.add(topic)
+        for topic in self.topics:
+            if topic not in self.topic_weights:
+                self.topic_weights[topic] = 1.0
+
         self.quality_score = np.clip(self.quality_score, 0.0, 1.0)
         self.controversy_score = np.clip(self.controversy_score, 0.0, 1.0)
         self.ideology_score = np.clip(self.ideology_score, -1.0, 1.0)

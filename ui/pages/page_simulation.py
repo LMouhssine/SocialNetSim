@@ -283,3 +283,7 @@ def render():
                     "Misinfo Share Rate",
                     f"{metrics.get('misinfo_share_rate', 0):.2%}",
                 )
+
+
+if __name__ == "__main__":
+    render()

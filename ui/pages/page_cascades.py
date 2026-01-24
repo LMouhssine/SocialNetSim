@@ -248,3 +248,7 @@ def render_cascade_tree(cascade, max_nodes: int = 50) -> str:
         html += f"<p><em>Showing first {max_nodes} nodes of {cascade.total_shares + 1}</em></p>"
 
     return html
+
+
+if __name__ == "__main__":
+    render()

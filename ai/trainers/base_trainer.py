@@ -103,31 +103,45 @@ class BaseTrainer(ABC):
 
     def train(
         self,
-        df: pd.DataFrame,
+        df: pd.DataFrame | np.ndarray,
+        y: np.ndarray | pd.Series | None = None,
         target_column: str = "target",
         test_size: float = 0.2,
         validate: bool = True,
     ) -> dict[str, float]:
         """Train the model on provided data.
 
-        Args:
-            df: DataFrame with features and target
-            target_column: Name of target column
-            test_size: Fraction for test set
-            validate: Whether to compute validation metrics
-
-        Returns:
-            Dictionary of training metrics
+        Supports both:
+        - train(df, target_column=...)
+        - train(X, y)
         """
-        # Get feature columns
-        self.feature_names = self.get_feature_columns()
-        available_features = [f for f in self.feature_names if f in df.columns]
+        # Backward compatibility: train(df, "target")
+        if isinstance(y, str) and target_column == "target":
+            target_column = y
+            y = None
 
-        if not available_features:
-            raise ValueError("No matching feature columns found in DataFrame")
-
-        X = df[available_features].values
-        y = df[target_column].values
+        # DataFrame path
+        if isinstance(df, pd.DataFrame):
+            if y is None:
+                # Use predefined feature columns
+                self.feature_names = self.get_feature_columns()
+                available_features = [f for f in self.feature_names if f in df.columns]
+                if not available_features:
+                    raise ValueError("No matching feature columns found in DataFrame")
+                X = df[available_features].values
+                y = df[target_column].values
+            else:
+                # Explicit features + target
+                self.feature_names = list(df.columns)
+                X = df.values
+                y = np.array(y)
+        else:
+            # Numpy array path
+            if y is None:
+                raise ValueError("Target values are required when training from arrays")
+            X = np.array(df)
+            y = np.array(y)
+            self.feature_names = [f"f{i}" for i in range(X.shape[1])]
 
         # Handle missing values
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
@@ -220,7 +234,7 @@ class BaseTrainer(ABC):
 
         return metrics
 
-    def predict(self, df: pd.DataFrame) -> np.ndarray:
+    def predict(self, df: pd.DataFrame | np.ndarray) -> np.ndarray:
         """Make predictions on new data.
 
         Args:
@@ -230,15 +244,25 @@ class BaseTrainer(ABC):
             Predictions array
         """
         if not self.is_trained:
-            raise RuntimeError("Model not trained")
+            raise ValueError("Model not trained")
 
-        available_features = [f for f in self.feature_names if f in df.columns]
-        X = df[available_features].values
+        if isinstance(df, pd.DataFrame):
+            if self.feature_names:
+                available_features = [f for f in self.feature_names if f in df.columns]
+                X = df[available_features].values
+            else:
+                X = df.values
+        else:
+            X = np.array(df)
+
         X = np.nan_to_num(X, nan=0.0)
-
         return self.model.predict(X)
 
-    def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
+    def predict_proba(
+        self,
+        df: pd.DataFrame | np.ndarray,
+        positive_class_only: bool = True,
+    ) -> np.ndarray:
         """Get probability predictions (classification only).
 
         Args:
@@ -248,7 +272,7 @@ class BaseTrainer(ABC):
             Probability array
         """
         if not self.is_trained:
-            raise RuntimeError("Model not trained")
+            raise ValueError("Model not trained")
 
         if self.task_type != "classification":
             raise ValueError("predict_proba only available for classification")
@@ -256,11 +280,19 @@ class BaseTrainer(ABC):
         if not hasattr(self.model, "predict_proba"):
             raise ValueError(f"Model type {self.model_type} doesn't support predict_proba")
 
-        available_features = [f for f in self.feature_names if f in df.columns]
-        X = df[available_features].values
+        if isinstance(df, pd.DataFrame):
+            if self.feature_names:
+                available_features = [f for f in self.feature_names if f in df.columns]
+                X = df[available_features].values
+            else:
+                X = df.values
+        else:
+            X = np.array(df)
         X = np.nan_to_num(X, nan=0.0)
-
-        return self.model.predict_proba(X)
+        probs = self.model.predict_proba(X)
+        if positive_class_only and probs.ndim == 2 and probs.shape[1] > 1:
+            return probs[:, 1]
+        return probs
 
     def get_feature_importance(self) -> dict[str, float]:
         """Get feature importance scores.
@@ -269,7 +301,7 @@ class BaseTrainer(ABC):
             Dictionary mapping feature name to importance
         """
         if not self.is_trained:
-            raise RuntimeError("Model not trained")
+            raise ValueError("Model not trained")
 
         if hasattr(self.model, "feature_importances_"):
             importances = self.model.feature_importances_

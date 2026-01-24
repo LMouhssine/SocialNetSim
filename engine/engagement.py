@@ -83,30 +83,73 @@ class EngagementModel:
         self,
         user: User,
         post: Post,
-        state: SimulationState,
-        users: dict[str, User],
+        state: SimulationState | int | None = None,
+        users: dict[str, User] | None = None,
         cognitive_state: UserCognitiveState | None = None,
-    ) -> EngagementProbabilities:
+        current_step: int | None = None,
+    ) -> EngagementProbabilities | float:
         """Calculate engagement probabilities for a user-post pair.
 
-        Args:
-            user: User viewing the post
-            post: Post being viewed
-            state: Simulation state
-            users: Dictionary of all users
-            cognitive_state: User's cognitive state (for utility model)
-
-        Returns:
-            EngagementProbabilities object
+        Backward compatibility:
+        - If ``state`` is omitted, returns a scalar probability (view probability).
+        - ``current_step`` can be provided for legacy callers.
         """
-        # Use utility-based model if enabled
-        if self.use_utility_model and self.decision_model:
-            return self._calculate_utility_based_probabilities(
-                user, post, state, users, cognitive_state
-            )
+        # Handle legacy signature where state was an int current_step
+        if isinstance(state, int) and current_step is None:
+            current_step = state
+            state = None
 
-        # Fall back to original probabilistic model
-        return self._calculate_legacy_probabilities(user, post, state, users)
+        if isinstance(state, SimulationState):
+            if users is None:
+                users = state.users
+            # Use utility-based model if enabled
+            if self.use_utility_model and self.decision_model:
+                return self._calculate_utility_based_probabilities(
+                    user, post, state, users, cognitive_state
+                )
+
+            # Fall back to original probabilistic model
+            return self._calculate_legacy_probabilities(user, post, state, users)
+
+        # Legacy path: no SimulationState provided -> return scalar probability
+        if current_step is None:
+            current_step = 0
+
+        users_map = users or {user.user_id: user}
+        dummy_state = SimulationState(users_map)
+        dummy_state.current_step = current_step
+
+        probs = self._calculate_legacy_probabilities(user, post, dummy_state, users_map)
+        return probs.view
+
+    def decide_interaction_type(
+        self,
+        user: User,
+        post: Post,
+        current_step: int = 0,
+    ) -> InteractionType | None:
+        """Backward-compatible interaction decision."""
+        prob = self.calculate_engagement_probability(
+            user=user,
+            post=post,
+            current_step=current_step,
+        )
+        if isinstance(prob, EngagementProbabilities):
+            engage_prob = prob.view
+        else:
+            engage_prob = prob
+
+        if self.rng.random() > engage_prob:
+            return None
+
+        roll = self.rng.random()
+        if roll < 0.6:
+            return InteractionType.VIEW
+        if roll < 0.8:
+            return InteractionType.LIKE
+        if roll < 0.9:
+            return InteractionType.COMMENT
+        return InteractionType.SHARE
 
     def _calculate_utility_based_probabilities(
         self,

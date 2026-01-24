@@ -66,6 +66,8 @@ class FeatureExtractor:
         features["ideology_score_abs"] = abs(post.content.ideology_score)
         features["num_topics"] = len(post.content.topics)
         features["is_misinformation"] = float(post.content.is_misinformation)
+        # Backward-compatible numeric sentiment
+        features["sentiment"] = post.sentiment
 
         # Sentiment encoding (one-hot style)
         sentiment = str(post.content.sentiment)
@@ -111,18 +113,61 @@ class FeatureExtractor:
             features["likes_per_step"] = post.like_count / age
             features["shares_per_step"] = post.share_count / age
         else:
-            features["post_age"] = 0
-            features["view_count"] = 0
-            features["like_count"] = 0
-            features["share_count"] = 0
-            features["comment_count"] = 0
-            features["total_engagement"] = 0
-            features["engagement_rate"] = 0.0
-            features["velocity"] = 0.0
-            features["likes_per_step"] = 0.0
-            features["shares_per_step"] = 0.0
+            # Use available post counters even without state
+            age = max(1, post.created_step + 1)
+            features["post_age"] = age
+            features["view_count"] = post.view_count
+            features["like_count"] = post.like_count
+            features["share_count"] = post.share_count
+            features["comment_count"] = post.comment_count
+            features["total_engagement"] = post.total_engagement
+            features["engagement_rate"] = post.engagement_rate
+            features["velocity"] = post.get_velocity(post.created_step + 1)
+            features["likes_per_step"] = post.like_count / age
+            features["shares_per_step"] = post.share_count / age
 
         return features
+
+    def extract_early_signals(
+        self,
+        post: Post,
+        interactions: list[Interaction],
+        window_steps: int = 5,
+    ) -> dict[str, float]:
+        """Extract early engagement signals for a post."""
+        start_step = post.created_step
+        end_step = start_step + window_steps
+
+        early_likes = 0
+        early_shares = 0
+        early_comments = 0
+        early_views = 0
+
+        for interaction in interactions:
+            if interaction.post_id != post.post_id:
+                continue
+            if interaction.step < start_step or interaction.step > end_step:
+                continue
+            if interaction.interaction_type == InteractionType.LIKE:
+                early_likes += 1
+            elif interaction.interaction_type == InteractionType.SHARE:
+                early_shares += 1
+            elif interaction.interaction_type == InteractionType.COMMENT:
+                early_comments += 1
+            elif interaction.interaction_type == InteractionType.VIEW:
+                early_views += 1
+
+        return {
+            "early_likes": early_likes,
+            "early_shares": early_shares,
+            "early_comments": early_comments,
+            "early_views": early_views,
+        }
+
+    def build_feature_matrix(self, posts: list[Post]) -> pd.DataFrame:
+        """Build a feature matrix from a list of posts (legacy helper)."""
+        records = [self.extract_post_features(post) for post in posts]
+        return pd.DataFrame(records)
 
     def extract_user_features(
         self,
@@ -350,7 +395,7 @@ class FeatureExtractor:
         return pd.DataFrame(records)
 
     @staticmethod
-    def get_feature_names(feature_type: str) -> list[str]:
+    def get_feature_names(feature_type: str = "post") -> list[str]:
         """Get list of feature names for a feature type.
 
         Args:
@@ -363,8 +408,9 @@ class FeatureExtractor:
             return [
                 "text_length", "quality_score", "controversy_score",
                 "emotional_intensity", "ideology_score_abs", "num_topics",
-                "is_misinformation", "sentiment_positive", "sentiment_negative",
-                "sentiment_neutral", "sentiment_mixed", "author_influence",
+                "is_misinformation", "sentiment", "sentiment_positive",
+                "sentiment_negative", "sentiment_neutral", "sentiment_mixed",
+                "author_influence",
                 "author_credibility", "author_followers", "author_following",
                 "author_total_posts", "author_activity_level", "author_ideology_abs",
                 "post_age", "view_count", "like_count", "share_count",

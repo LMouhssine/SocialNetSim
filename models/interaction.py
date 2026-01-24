@@ -1,7 +1,8 @@
 """Interaction and cascade models."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, InitVar
 from typing import Any
+import uuid
 
 from .enums import InteractionType
 
@@ -21,14 +22,26 @@ class Interaction:
         metadata: Additional data (e.g., comment text simulation)
     """
 
-    interaction_id: str
-    user_id: str
-    post_id: str
-    interaction_type: InteractionType
+    interaction_id: str | None = None
+    user_id: str = ""
+    post_id: str = ""
+    interaction_type: InteractionType = InteractionType.VIEW
     step: int = 0
     cascade_id: str | None = None
     source_user_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    target_id: InitVar[str | None] = None
+
+    def __post_init__(self, target_id: str | None) -> None:
+        """Normalize legacy args and ensure IDs are set."""
+        if not self.post_id and target_id:
+            self.post_id = target_id
+
+        if isinstance(self.interaction_type, str):
+            self.interaction_type = InteractionType(self.interaction_type)
+
+        if not self.interaction_id:
+            self.interaction_id = f"int_{uuid.uuid4().hex[:12]}"
 
     @property
     def is_engagement(self) -> bool:
@@ -267,6 +280,26 @@ class Cascade:
     def deactivate(self) -> None:
         """Mark cascade as no longer active."""
         self.is_active = False
+
+    @property
+    def root_post_id(self) -> str:
+        """Backward-compatible alias for post_id."""
+        return self.post_id
+
+    @property
+    def original_author_id(self) -> str | None:
+        """Backward-compatible alias for cascade root author."""
+        return self.root.user_id if self.root else None
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Backward-compatible metrics summary."""
+        return {
+            "total_shares": self.total_shares,
+            "total_reach": self.total_reach,
+            "max_depth": self.max_depth,
+            "peak_velocity": self.peak_velocity,
+            "virality_score": float(self.metadata.get("virality_score", 0.0)),
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Convert cascade to dictionary."""

@@ -208,7 +208,9 @@ def render_virality_analysis(model, sim):
 
     with col2:
         # Actual vs predicted
-        viral_counts = predictions_df["viral_prediction"].value_counts()
+        viral_counts = predictions_df["viral_prediction"].value_counts().reindex(
+            [0, 1], fill_value=0
+        )
         fig = px.pie(
             values=viral_counts.values,
             names=["Not Viral", "Viral"],
@@ -327,3 +329,7 @@ def render_misinfo_analysis(model, sim):
             title="Actual vs Detected Misinformation",
         )
         st.plotly_chart(fig, use_container_width=True)
+
+
+if __name__ == "__main__":
+    render()

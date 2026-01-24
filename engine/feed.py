@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 from numpy.random import Generator
 
-from config.schemas import FeedConfig
+from config.schemas import FeedConfig, SimulationConfig
 from models import User, Post
 from models.enums import FeedAlgorithm
 from .state import SimulationState
@@ -29,7 +29,7 @@ class EnhancedFeedRanker:
 
     def __init__(
         self,
-        config: FeedConfig,
+        config: FeedConfig | SimulationConfig,
         seed: int | None = None,
         controversy_amplification_weight: float = 0.1,
         controversy_cap: float = 0.3,
@@ -48,6 +48,11 @@ class EnhancedFeedRanker:
             use_bandit_optimization: Whether to use bandit optimization
             bandit_type: Type of bandit ("thompson" or "linucb")
         """
+        if isinstance(config, SimulationConfig):
+            if seed is None:
+                seed = config.seed
+            config = config.feed
+
         self.config = config
         self.rng = np.random.default_rng(seed)
         self.algorithm = FeedAlgorithm(config.algorithm)
@@ -69,6 +74,15 @@ class EnhancedFeedRanker:
         else:
             self.optimizer = None
 
+    def _normalize_algorithm(self, algorithm: FeedAlgorithm | str) -> FeedAlgorithm:
+        """Normalize algorithm input to FeedAlgorithm enum."""
+        if isinstance(algorithm, FeedAlgorithm):
+            return algorithm
+        try:
+            return FeedAlgorithm(str(algorithm))
+        except Exception:
+            return FeedAlgorithm.ENGAGEMENT
+
     def rank_feed(
         self,
         user: User,
@@ -87,7 +101,7 @@ class EnhancedFeedRanker:
         Returns:
             Ranked list of posts
         """
-        algorithm = override_algorithm or self.algorithm
+        algorithm = self._normalize_algorithm(override_algorithm or self.algorithm)
 
         # Filter out posts user has seen (with penalty instead of removal)
         user_state = state.get_user_state(user.user_id)
@@ -114,6 +128,32 @@ class EnhancedFeedRanker:
         ranked_posts = [post for post, _ in scored_posts[:self.config.feed_size]]
 
         return ranked_posts
+
+    def rank_posts(
+        self,
+        posts: list[Post],
+        user: User | None = None,
+        current_step: int = 0,
+        limit: int | None = None,
+        seen_post_ids: set[str] | None = None,
+    ) -> list[Post]:
+        """Backward-compatible ranking API (no SimulationState required)."""
+        seen_post_ids = seen_post_ids or set()
+        filtered = [p for p in posts if p.post_id not in seen_post_ids]
+
+        algorithm = self._normalize_algorithm(self.algorithm)
+
+        if algorithm == FeedAlgorithm.CHRONOLOGICAL:
+            ranked = sorted(filtered, key=lambda p: p.created_step, reverse=True)
+        elif algorithm == FeedAlgorithm.ENGAGEMENT:
+            ranked = sorted(filtered, key=lambda p: p.total_engagement, reverse=True)
+        else:
+            ranked = list(filtered)
+
+        if limit is not None:
+            ranked = ranked[:limit]
+
+        return ranked
 
     def _rank_chronological(
         self,

@@ -6,7 +6,7 @@ import uuid
 import numpy as np
 from numpy.random import Generator
 
-from config.schemas import CascadeConfig
+from config.schemas import CascadeConfig, SimulationConfig
 from models import User, Post, Cascade, Interaction
 from models.enums import InteractionType
 from .state import SimulationState
@@ -27,7 +27,7 @@ class CascadeEngine:
 
     def __init__(
         self,
-        config: CascadeConfig,
+        config: CascadeConfig | SimulationConfig,
         seed: int | None = None,
         use_hawkes: bool = True,
         hawkes_baseline: float = 0.01,
@@ -52,6 +52,23 @@ class CascadeEngine:
             immunity_duration: Steps of immunity after sharing
             enable_delayed_effects: Whether to enable delayed effects
         """
+        # Backward-compatible config handling
+        if isinstance(config, SimulationConfig):
+            sim_config = config
+            config = sim_config.cascade
+            if seed is None:
+                seed = sim_config.seed
+
+        # Backward-compatible seed handling (accept World)
+        try:
+            from generator import World
+        except Exception:
+            World = None
+
+        if World is not None and isinstance(seed, World):
+            world = seed
+            seed = getattr(world, "seed", None) or getattr(world.config, "seed", None)
+
         self.config = config
         self.rng = np.random.default_rng(seed)
         self.seed = seed
@@ -128,6 +145,22 @@ class CascadeEngine:
         self.diffusion_model.initialize_cascade(cascade_id, [author.user_id])
 
         return cascade
+
+    def create_cascade(self, post: Post) -> Cascade:
+        """Backward-compatible cascade creation (minimal state)."""
+        self.cascade_counter += 1
+        cascade_id = f"cascade_{self.cascade_counter:08d}"
+        cascade = Cascade(
+            cascade_id=cascade_id,
+            post_id=post.post_id,
+        )
+        cascade.initialize(post.author_id, post.created_step)
+        cascade.metadata["virality_score"] = self.calculate_virality_potential(post)
+        return cascade
+
+    def calculate_virality_potential(self, post: Post) -> float:
+        """Backward-compatible virality potential calculation."""
+        return post.calculate_virality_potential()
 
     def process_cascade_spread(
         self,
@@ -431,7 +464,7 @@ class CascadeEngine:
     def get_cascade_statistics(
         self,
         cascade: Cascade,
-        state: SimulationState,
+        state: SimulationState | None,
     ) -> dict[str, Any]:
         """Get statistics for a cascade.
 
@@ -449,11 +482,11 @@ class CascadeEngine:
             "total_reach": cascade.total_reach,
             "max_depth": cascade.max_depth,
             "peak_velocity": cascade.peak_velocity,
-            "current_velocity": cascade.get_velocity(state.current_step),
+            "current_velocity": cascade.get_velocity(state.current_step) if state else 0.0,
             "branching_factor": cascade.get_branching_factor(),
             "depth_distribution": cascade.get_depth_distribution(),
             "is_active": cascade.is_active,
-            "age": state.current_step - cascade.start_step,
+            "age": state.current_step - cascade.start_step if state else 0,
         }
 
     def get_viral_cascades(

@@ -222,3 +222,7 @@ def render():
                 "experiment_comparison.csv",
                 "text/csv",
             )
+
+
+if __name__ == "__main__":
+    render()

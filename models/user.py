@@ -384,6 +384,23 @@ class User:
     total_interactions: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Normalize legacy inputs (dict/list) for interests and connections."""
+        if isinstance(self.interests, dict):
+            if not self.interest_weights:
+                self.interest_weights = dict(self.interests)
+            self.interests = set(self.interests.keys())
+        elif isinstance(self.interests, list):
+            self.interests = set(self.interests)
+
+        if not self.interest_weights and self.interests:
+            self.interest_weights = {topic: 1.0 for topic in self.interests}
+
+        if isinstance(self.followers, list):
+            self.followers = set(self.followers)
+        if isinstance(self.following, list):
+            self.following = set(self.following)
+
     @property
     def follower_count(self) -> int:
         """Get number of followers."""

@@ -30,6 +30,33 @@ class ModelEvaluator:
         """Initialize evaluator."""
         self.evaluation_history: list[dict[str, Any]] = []
 
+    def evaluate_binary(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        y_proba: np.ndarray | None = None,
+    ) -> dict[str, float]:
+        """Backward-compatible binary classification evaluation."""
+        metrics = {
+            "accuracy": accuracy_score(y_true, y_pred),
+            "precision": precision_score(y_true, y_pred, zero_division=0),
+            "recall": recall_score(y_true, y_pred, zero_division=0),
+            "f1": f1_score(y_true, y_pred, zero_division=0),
+        }
+
+        if y_proba is not None:
+            proba = np.array(y_proba)
+            if proba.ndim == 2 and proba.shape[1] > 1:
+                proba = proba[:, 1]
+            try:
+                metrics["auc_roc"] = roc_auc_score(y_true, proba)
+            except Exception:
+                metrics["auc_roc"] = float("nan")
+        else:
+            metrics["auc_roc"] = float("nan")
+
+        return metrics
+
     def evaluate_model(
         self,
         trainer: BaseTrainer,
@@ -160,29 +187,44 @@ class ModelEvaluator:
 
     def cross_validate(
         self,
-        trainer: BaseTrainer,
-        df: pd.DataFrame,
-        target_column: str = "target",
+        trainer_or_model: BaseTrainer | Any,
+        df_or_X: pd.DataFrame | np.ndarray,
+        target_column: str | np.ndarray = "target",
         n_folds: int = 5,
         model_name: str = "model",
+        y: np.ndarray | None = None,
+        cv: int | None = None,
     ) -> dict[str, Any]:
-        """Perform cross-validation.
+        """Perform cross-validation (supports trainer or sklearn model)."""
+        # Sklearn-style path
+        if not isinstance(trainer_or_model, BaseTrainer) or not isinstance(df_or_X, pd.DataFrame):
+            X = np.array(df_or_X)
+            if y is None:
+                y = np.array(target_column)
+            folds = cv or n_folds
+            scores = cross_val_score(
+                trainer_or_model,
+                X,
+                y,
+                cv=folds,
+                scoring="accuracy",
+            )
+            return {
+                "mean_accuracy": float(np.mean(scores)),
+                "std_accuracy": float(np.std(scores)),
+                "fold_scores": scores.tolist(),
+            }
 
-        Args:
-            trainer: Model trainer (will be retrained)
-            df: DataFrame with features and target
-            target_column: Name of target column
-            n_folds: Number of CV folds
-            model_name: Name for this evaluation
+        # Trainer/DataFrame path
+        trainer = trainer_or_model
+        df = df_or_X
+        folds = cv or n_folds
 
-        Returns:
-            Cross-validation results
-        """
         feature_cols = trainer.get_feature_columns()
         available_features = [f for f in feature_cols if f in df.columns]
 
         X = df[available_features].values
-        y = df[target_column].values
+        y_vals = df[target_column].values
         X = np.nan_to_num(X, nan=0.0)
 
         # Create model
@@ -191,28 +233,28 @@ class ModelEvaluator:
         # Scoring metric
         if trainer.task_type == "classification":
             scoring = "accuracy"
-            if len(np.unique(y)) == 2:
-                cv = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+            if len(np.unique(y_vals)) == 2:
+                cv_obj = StratifiedKFold(n_splits=folds, shuffle=True, random_state=42)
             else:
-                cv = n_folds
+                cv_obj = folds
         else:
             scoring = "neg_mean_squared_error"
-            cv = n_folds
+            cv_obj = folds
 
         # Cross-validation
         scores = cross_val_score(
             trainer.model,
             X,
-            y,
-            cv=cv,
+            y_vals,
+            cv=cv_obj,
             scoring=scoring,
         )
 
         results = {
             "model_name": model_name,
             "model_type": trainer.model_type,
-            "n_folds": n_folds,
-            "n_samples": len(y),
+            "n_folds": folds,
+            "n_samples": len(y_vals),
             "scores": scores.tolist(),
             "mean_score": float(np.mean(scores)),
             "std_score": float(np.std(scores)),

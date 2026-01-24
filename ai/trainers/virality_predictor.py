@@ -156,7 +156,8 @@ class ViralityPredictor(BaseTrainer):
         df = pd.DataFrame([features])
 
         prediction = self.predict(df)[0]
-        proba = self.predict_proba(df)[0, 1]  # Probability of viral class
+        probas = self.predict_proba(df)
+        proba = probas[0] if probas.ndim == 1 else probas[0, 1]
 
         return bool(prediction), float(proba)
 
@@ -186,7 +187,8 @@ class ViralityPredictor(BaseTrainer):
         df = pd.DataFrame(records)
 
         predictions = self.predict(df)
-        probabilities = self.predict_proba(df)[:, 1]
+        probas = self.predict_proba(df)
+        probabilities = probas if probas.ndim == 1 else probas[:, 1]
 
         df["viral_prediction"] = predictions
         df["viral_probability"] = probabilities

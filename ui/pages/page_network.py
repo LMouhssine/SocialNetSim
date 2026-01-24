@@ -248,3 +248,7 @@ def create_network_visualization(world, sample_size: int, color_by: str) -> str:
     # Generate HTML
     html = net.generate_html()
     return html
+
+
+if __name__ == "__main__":
+    render()
